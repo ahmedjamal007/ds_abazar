@@ -4,8 +4,11 @@ obj/
 *.user
 .vs/
 
-# Installers — built artefacts, kept locally, never in history (7 MB each)
-installer/Output/
+# Installers — built artefacts (7 MB each). Only the CURRENT release is tracked, so a
+# download is one click from the repo; older builds stay local. Update the exception
+# when a new version ships, or the new installer will be silently ignored.
+installer/Output/*
+!installer/Output/Dawaii-Setup-2.3.0.exe
 
 # Recovery scratch from the lost-drive incident — the recovered edits are all applied
 _recovered/
