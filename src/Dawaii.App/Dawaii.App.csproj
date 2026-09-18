@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Dawaii.App</RootNamespace>
+    <AssemblyName>Dawaii</AssemblyName>
+    <ApplicationIcon>..\..\assets\dawaii.ico</ApplicationIcon>
+    <Deterministic>true</Deterministic>
+    <Version>2.3.0</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <NeutralLanguage>ar</NeutralLanguage>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Dawaii.Core\Dawaii.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DPAPI (ProtectedData) for the encrypted "remember me" password on the login screen. -->
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- WPF, used headlessly by the receipt printer (V2.2). Not for any window: WPF's FormattedText
+         goes through DirectWrite, which shapes and connects Arabic properly and lets the receipt be
+         rasterised to the print head's exact dot width. GDI could not be made to do either reliably. -->
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Offline report exports (V1.2 req 1): NPOI writes .xlsx; PdfSharp writes .pdf
+         (pages rendered with GDI so Arabic shapes correctly, then embedded as images). -->
+    <PackageReference Include="NPOI" Version="2.5.6" />
+    <PackageReference Include="PdfSharp" Version="1.50.5147" />
+  </ItemGroup>
+
+  <!-- Embed the logo so the splash/login screen works with no external file. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\assets\logo.png" Link="Resources\logo.png" />
+  </ItemGroup>
+
+</Project>

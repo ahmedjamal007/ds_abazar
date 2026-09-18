@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <IsPackable>false</IsPackable>
+    <!-- The POS multi-cart tests drive the real WinForms module. -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Dawaii.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Dawaii.Core\Dawaii.Core.csproj" />
+    <!-- Referenced for exporter/printer smoke tests (WinExe assemblies are referenceable). -->
+    <ProjectReference Include="..\..\src\Dawaii.App\Dawaii.App.csproj" />
+  </ItemGroup>
+
+</Project>

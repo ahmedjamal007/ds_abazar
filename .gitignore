@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+*.user
+.vs/
+
+# Installers — built artefacts, kept locally, never in history (7 MB each)
+installer/Output/
+
+# Recovery scratch from the lost-drive incident — the recovered edits are all applied
+_recovered/
+
+# Local databases and their journals
+*.db
+*.db-wal
+*.db-shm
+
+# Test output
+TestResults/
