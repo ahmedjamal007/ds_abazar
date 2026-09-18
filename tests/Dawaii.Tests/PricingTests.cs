@@ -13,8 +13,8 @@ using NUnit.Framework;
 namespace Dawaii.Tests
 {
     /// <summary>
-    /// Price management (V2.3): a profit multiplier over cost, rounded to a price a customer can be
-    /// charged, previewed, then applied.
+    /// Price increases (V2.3): a multiplier over the CURRENT SELLING PRICE — not the cost — rounded
+    /// to a price a customer can be charged, previewed, then applied.
     ///
     /// The thing that has to hold is the relationship the rest of the app already relies on: the item
     /// stores one per-unit figure, and box = unit × units-per-box, strip = unit × units-per-strip,
@@ -77,22 +77,22 @@ namespace Dawaii.Tests
         // ---------------- the multiplier, and the box/strip/unit relationship ----------------
 
         [Test]
-        public void PlanFromCost_MultipliesTheStripAndRebuildsTheBox()
+        public void Plan_MultipliesTheStripPrice_AndRebuildsTheBox()
         {
-            // 50/unit, 10 units a strip, 10 strips a box: strip costs 500, box costs 5000.
-            PricePlanFigures f = BatchPricing.PlanFromCost(50m, stripsPerBox: 10, unitsPerStrip: 10, multiplier: 1.3m);
+            // Sells at 50/unit, 10 units a strip, 10 strips a box: strip 500, box 5,000. Raise by 30%.
+            PricePlanFigures f = BatchPricing.PlanFromSellingPrice(50m, stripsPerBox: 10, unitsPerStrip: 10, multiplier: 1.3m);
 
             Assert.That(f.StripPrice, Is.EqualTo(650m));
-            Assert.That(f.BoxPrice, Is.EqualTo(6500m), "the user's own example: 5000 × 1.3");
+            Assert.That(f.BoxPrice, Is.EqualTo(6500m), "5,000 × 1.3");
             Assert.That(f.UnitPrice, Is.EqualTo(65m));
             Assert.That(f.WasRounded, Is.False, "650 was already clean");
         }
 
         [Test]
-        public void PlanFromCost_RoundsTheStrip_SoTheBoxIsAnExactMultipleOfIt()
+        public void Plan_RoundsTheStrip_SoTheBoxIsAnExactMultipleOfIt()
         {
-            // A cost that does not divide nicely: 33.33/unit → strip cost 333.30 → ×1.3 = 433.29.
-            PricePlanFigures f = BatchPricing.PlanFromCost(33.33m, 10, 10, 1.3m);
+            // A price that does not multiply nicely: 33.33/unit → strip 333.30 → ×1.3 = 433.29.
+            PricePlanFigures f = BatchPricing.PlanFromSellingPrice(33.33m, 10, 10, 1.3m);
 
             Assert.That(f.StripPrice, Is.EqualTo(430m), "433.29 rounds to the nearest 10");
             Assert.That(f.BoxPrice, Is.EqualTo(4300m), "box = strip × 10, not a separately rounded figure");
@@ -101,63 +101,59 @@ namespace Dawaii.Tests
         }
 
         [Test]
-        public void PlanFromCost_UnitPrice_RebuildsTheBoxExactly()
+        public void Plan_UnitPrice_RebuildsTheBoxExactly()
         {
             // The item stores only the per-unit figure; the POS multiplies it back up. If that does not
             // reproduce the box price exactly, the receipt shows one price and the plan showed another.
-            foreach (var (cost, strips, units, mult) in new[]
+            foreach (var (price, strips, units, mult) in new[]
             {
                 (33.33m, 10, 10, 1.3m), (7m, 3, 12, 1.25m), (1234m, 1, 1, 1.5m), (0.5m, 4, 30, 2m)
             })
             {
-                PricePlanFigures f = BatchPricing.PlanFromCost(cost, strips, units, mult);
+                PricePlanFigures f = BatchPricing.PlanFromSellingPrice(price, strips, units, mult);
                 // The per-unit figure can be a repeating decimal (330 ÷ 36); every consumer — the line
                 // total, the receipt, the grid — rounds to 2dp, so that is the precision that has to hold.
-                Assert.That(decimal.Round(f.UnitPrice * strips * units, 2), Is.EqualTo(f.BoxPrice), $"cost {cost} × {mult}");
+                Assert.That(decimal.Round(f.UnitPrice * strips * units, 2), Is.EqualTo(f.BoxPrice), $"price {price} × {mult}");
                 Assert.That(decimal.Round(f.UnitPrice * units, 2), Is.EqualTo(f.StripPrice));
             }
         }
 
         [Test]
-        public void PlanFromCost_ABoxThatIsOneStrip_RoundsTheBoxItself()
+        public void Plan_ABoxThatIsOneStrip_RoundsTheBoxItself()
         {
-            PricePlanFigures f = BatchPricing.PlanFromCost(5000m, stripsPerBox: 1, unitsPerStrip: 1, multiplier: 1.3m);
+            PricePlanFigures f = BatchPricing.PlanFromSellingPrice(5000m, stripsPerBox: 1, unitsPerStrip: 1, multiplier: 1.3m);
             Assert.That(f.BoxPrice, Is.EqualTo(6500m));
             Assert.That(f.StripPrice, Is.EqualTo(6500m));
             Assert.That(f.UnitPrice, Is.EqualTo(6500m));
         }
 
         [Test]
-        public void PlanFromCost_NeverRoundsBelowCost()
+        public void Plan_AllowsAMultiplierUnderOne_AsADiscount()
         {
-            // 107 cost × 1.005 = 107.54 → nearest 5 is 105, which would sell at a loss.
-            PricePlanFigures f = BatchPricing.PlanFromCost(107m, 1, 1, 1.005m);
-            Assert.That(f.StripPrice, Is.EqualTo(110m), "the step is taken upward instead");
-            Assert.That(f.StripPrice, Is.GreaterThanOrEqualTo(107m));
-
-            // And the same guard across a sweep of awkward costs and thin multipliers.
-            var rng = new Random(3);
-            for (int i = 0; i < 500; i++)
-            {
-                decimal cost = (decimal)(rng.NextDouble() * 20000 + 1);
-                decimal mult = 1.001m + (decimal)rng.NextDouble() * 0.05m;
-                PricePlanFigures g = BatchPricing.PlanFromCost(cost, 1, 1, mult);
-                Assert.That(g.StripPrice, Is.GreaterThanOrEqualTo(cost), $"cost {cost} × {mult} -> {g.StripPrice}");
-            }
+            PricePlanFigures f = BatchPricing.PlanFromSellingPrice(5000m, 1, 1, 0.9m);
+            Assert.That(f.BoxPrice, Is.EqualTo(4500m), "a price can be brought down as well as up");
         }
 
         [Test]
-        public void PlanFromCost_RefusesAMultiplierThatIsNotPositive()
+        public void Plan_RefusesAMultiplierThatIsNotPositive()
         {
-            Assert.Throws<ValidationException>(() => BatchPricing.PlanFromCost(50m, 10, 10, 0m));
-            Assert.Throws<ValidationException>(() => BatchPricing.PlanFromCost(50m, 10, 10, -1.3m));
+            Assert.Throws<ValidationException>(() => BatchPricing.PlanFromSellingPrice(50m, 10, 10, 0m));
+            Assert.Throws<ValidationException>(() => BatchPricing.PlanFromSellingPrice(50m, 10, 10, -1.3m));
         }
 
         [Test]
-        public void PlanFromCost_RefusesAnItemWithNoCost()
+        public void Plan_RefusesAnItemWithNoPrice()
         {
-            Assert.Throws<ValidationException>(() => BatchPricing.PlanFromCost(0m, 10, 10, 1.3m),
-                "there is nothing to multiply — the screen must flag it, not price it at zero");
+            Assert.Throws<ValidationException>(() => BatchPricing.PlanFromSellingPrice(0m, 10, 10, 1.3m),
+                "there is nothing to raise — the screen must flag it, not price it at zero");
+        }
+
+        [Test]
+        public void RoundToPractical_NeverRoundsAPositivePriceToZero()
+        {
+            // A house step larger than the price: 78 with "round to 1000". Zero would be a free drug.
+            Assert.That(BatchPricing.RoundToPractical(78m, step: 1000m), Is.EqualTo(1000m));
+            Assert.That(BatchPricing.RoundToPractical(2m), Is.EqualTo(5m), "and under the magnitude rule too");
         }
 
         // ---------------- the service: preview ----------------
@@ -192,17 +188,16 @@ namespace Dawaii.Tests
         [Test]
         public void Preview_PlansEveryPricedItem_AndSaysWhyOthersAreSkipped()
         {
-            int panadol = Drug("panadol", 50m, 60m);
-            int nothing = Drug("mystery", 0m, null);
+            int panadol = Drug("panadol", 50m, 60m);          // sells at 6,000 a box
+            int nothing = Drug("mystery", 50m, null);         // a cost but no price yet
             int handSet = Drug("brufen", 40m, 70m, manual: true);
 
             var rows = _svc.Preview(_admin, new[] { panadol, nothing, handSet }, 1.3m);
 
             Assert.That(rows.Select(r => r.Item.Id), Is.EqualTo(new[] { panadol, nothing, handSet }), "caller's order kept");
             Assert.That(rows[0].Status, Is.EqualTo(PricePlanStatus.Planned));
-            Assert.That(rows[0].Basis, Is.EqualTo(PriceBasis.Cost));
-            Assert.That(rows[0].New.BoxPrice, Is.EqualTo(6500m));
-            Assert.That(rows[1].Status, Is.EqualTo(PricePlanStatus.NoCost), "neither a cost nor a price — flagged, not priced");
+            Assert.That(rows[0].New.BoxPrice, Is.EqualTo(7800m), "6,000 × 1.3 — the selling price, not the 5,000 cost");
+            Assert.That(rows[1].Status, Is.EqualTo(PricePlanStatus.NoPrice), "nothing to raise — flagged, not priced from cost");
             Assert.That(rows[1].New, Is.Null);
             Assert.That(rows[2].Status, Is.EqualTo(PricePlanStatus.ManualSkipped), "a hand-set price is protected by default");
         }
@@ -210,15 +205,14 @@ namespace Dawaii.Tests
         // ---------------- no cost on file: the multiplier works from the shelf price ----------------
 
         [Test]
-        public void Preview_WithNoCostButAPrice_MultipliesTheCurrentSellingPrice()
+        public void Preview_MultipliesTheCurrentSellingPrice()
         {
-            // B protin: bought before costs were recorded, on the shelf at 55,000 a box.
+            // B protin: on the shelf at 55,000 a box, no cost on file — irrelevant, the price is what counts.
             int bProtin = Drug("B protin", 0m, 55000m, strips: 1, units: 1);
 
             var row = _svc.Preview(_admin, new[] { bProtin }, 1.25m).Single();
 
-            Assert.That(row.Status, Is.EqualTo(PricePlanStatus.Planned), "a shelf price is something to multiply");
-            Assert.That(row.Basis, Is.EqualTo(PriceBasis.SellingPrice), "and the screen must say which figure it used");
+            Assert.That(row.Status, Is.EqualTo(PricePlanStatus.Planned));
             Assert.That(row.New.RawStripPrice, Is.EqualTo(68750m), "55,000 × 1.25");
             Assert.That(row.New.BoxPrice, Is.EqualTo(69000m), "68,750 rounded to the nearest 500 at that magnitude");
         }
@@ -256,13 +250,25 @@ namespace Dawaii.Tests
         }
 
         [Test]
-        public void Preview_WithACost_StillPrefersTheCost()
+        public void Preview_IgnoresTheCost_EvenWhenItIsOnFile()
         {
-            // Both on file: the cost wins — that is what a profit multiplier means.
+            // Both on file: the SELLING price is what gets raised. A first cut multiplied the cost,
+            // which would have taken a 9,000 drug DOWN to 6,500 — the owner corrected it.
             int panadol = Drug("panadol", 50m, 90m);      // sells at 9,000, costs 5,000
             var row = _svc.Preview(_admin, new[] { panadol }, 1.3m).Single();
-            Assert.That(row.Basis, Is.EqualTo(PriceBasis.Cost));
-            Assert.That(row.New.BoxPrice, Is.EqualTo(6500m), "5,000 × 1.3, not 9,000 × 1.3");
+            Assert.That(row.New.BoxPrice, Is.EqualTo(11500m), "900 × 1.3 = 1,170 a strip → 1,150 → 11,500; not 5,000 × 1.3");
+        }
+
+        [Test]
+        public void Preview_FlagsAPriceThatLandsBelowCost_ButDoesNotRefuseIt()
+        {
+            int loss = Drug("loss", 80m, 60m);            // costs 8,000 a box, sells at 6,000, and ×0.9 → 5,400
+            var row = _svc.Preview(_admin, new[] { loss }, 0.9m).Single();
+            Assert.That(row.Status, Is.EqualTo(PricePlanStatus.Planned), "a discount is the pharmacist's call");
+            Assert.That(row.BelowCost, Is.True, "but the screen has to say so");
+
+            int fine = Drug("fine", 50m, 60m);
+            Assert.That(_svc.Preview(_admin, new[] { fine }, 1.3m).Single().BelowCost, Is.False);
         }
 
         [Test]
@@ -294,14 +300,14 @@ namespace Dawaii.Tests
 
             Assert.That(protectedRows.Single().Status, Is.EqualTo(PricePlanStatus.ManualSkipped));
             Assert.That(recalculated.Single().Status, Is.EqualTo(PricePlanStatus.Planned));
-            Assert.That(recalculated.Single().New.BoxPrice, Is.EqualTo(5200m));   // 400 × 1.3 = 520 a strip, stays 520
+            Assert.That(recalculated.Single().New.BoxPrice, Is.EqualTo(9100m));   // 700 × 1.3 = 910 a strip, stays 910
         }
 
         [Test]
         public void Preview_SaysWhenTheItemIsAlreadyAtThatPrice()
         {
-            int panadol = Drug("panadol", 50m, 65m);          // already 6500 a box
-            var rows = _svc.Preview(_admin, new[] { panadol }, 1.3m);
+            int panadol = Drug("panadol", 50m, 65m);          // 6,500 a box, and ×1.0 leaves it there
+            var rows = _svc.Preview(_admin, new[] { panadol }, 1.0m);
             Assert.That(rows.Single().Status, Is.EqualTo(PricePlanStatus.Unchanged));
         }
 
@@ -317,10 +323,10 @@ namespace Dawaii.Tests
         public void Preview_UsesTheHouseRoundingStep_WhenOneIsSet()
         {
             _settings.Seed(PricingService.RoundingStepKey, "1000");
-            int panadol = Drug("panadol", 42.5m, 60m, strips: 1, units: 1);   // 42.5 × 1.3 = 55.25
+            int panadol = Drug("panadol", 42.5m, 60m, strips: 1, units: 1);   // 60 × 1.3 = 78
 
             var rows = _svc.Preview(_admin, new[] { panadol }, 1.3m);
-            Assert.That(rows.Single().New.BoxPrice, Is.EqualTo(1000m), "1000 is the nearest step that is not below cost");
+            Assert.That(rows.Single().New.BoxPrice, Is.EqualTo(1000m), "the house step is one step at minimum, never zero");
         }
 
         [Test]

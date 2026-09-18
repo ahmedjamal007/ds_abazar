@@ -7,8 +7,13 @@ using Dawaii.Core.Models;
 namespace Dawaii.Core.Services
 {
     /// <summary>
-    /// Price management (V2.3 "إدارة الأسعار"): a profit multiplier over cost, rounded to a practical
-    /// figure, previewed, and applied to many items at once — or one price typed by hand.
+    /// Price increases (V2.3 "زيادة الأسعار"): a multiplier over the CURRENT SELLING PRICE, rounded to
+    /// a practical figure, previewed, and applied to many items at once — or one price typed by hand.
+    ///
+    /// The multiplier is applied to what the drug sells for today, not to its cost. That is the
+    /// pharmacy's actual routine: prices are set by the delivery that brought the box in, and then,
+    /// as the currency moves, everything on the shelf is raised by a percentage. A first cut
+    /// multiplied cost and treated the shelf price as a fallback; the owner corrected it.
     ///
     /// This sits on top of the pricing rule the app already had rather than beside it. Nothing here
     /// stores a strip or box price: the service works out the new BOX price, divides it down to the per
@@ -57,11 +62,9 @@ namespace Dawaii.Core.Services
         }
 
         /// <summary>
-        /// Works out what the given items would sell for at <paramref name="multiplier"/> over cost —
-        /// or, for a drug with no cost on file but a price on the shelf, over that current price, which
-        /// is the only thing there is to multiply (a supplement bought before costs were recorded, say).
-        /// Nothing is written. Every item comes back with a row saying either what its new price would
-        /// be and what it was based on, or why it has none: nothing to multiply, hand-priced and
+        /// Works out what the given items would sell for at <paramref name="multiplier"/> times their
+        /// current selling price. Nothing is written. Every item comes back with a row saying either
+        /// what its new price would be, or why it has none: no price on file, hand-priced and
         /// protected, or already at that price.
         /// </summary>
         /// <param name="includeManual">Recalculate items whose price was set by hand. Off by default: a
@@ -70,8 +73,8 @@ namespace Dawaii.Core.Services
             bool includeManual = false)
         {
             Require(actor);
-            if (multiplier <= 0m) throw new ValidationException("معامل الربح يجب أن يكون أكبر من صفر.");
-            if (multiplier > 100m) throw new ValidationException("معامل الربح غير معقول (أكبر من 100).");
+            if (multiplier <= 0m) throw new ValidationException("معامل الزيادة يجب أن يكون أكبر من صفر.");
+            if (multiplier > 100m) throw new ValidationException("معامل الزيادة غير معقول (أكبر من 100).");
             if (itemIds == null || itemIds.Count == 0) return new List<PricePlanRow>();
 
             decimal step = RoundingStep;
@@ -80,12 +83,11 @@ namespace Dawaii.Core.Services
             foreach (Item item in _items.GetByIds(itemIds))
             {
                 var row = new PricePlanRow { Item = item, Multiplier = multiplier };
-                bool hasCost = item.PurchasePrice > 0m;
                 bool hasPrice = item.SellingPrice.HasValue && item.SellingPrice.Value > 0m;
 
-                if (!hasCost && !hasPrice)
+                if (!hasPrice)
                 {
-                    row.Status = PricePlanStatus.NoCost;
+                    row.Status = PricePlanStatus.NoPrice;
                 }
                 else if (item.ManualPrice && !includeManual)
                 {
@@ -93,10 +95,8 @@ namespace Dawaii.Core.Services
                 }
                 else
                 {
-                    row.Basis = hasCost ? PriceBasis.Cost : PriceBasis.SellingPrice;
-                    PricePlanFigures figures = hasCost
-                        ? BatchPricing.PlanFromCost(item.PurchasePrice, item.StripsPerBox, item.UnitsPerStrip, multiplier, step)
-                        : BatchPricing.PlanFromSellingPrice(item.SellingPrice.Value, item.StripsPerBox, item.UnitsPerStrip, multiplier, step);
+                    PricePlanFigures figures = BatchPricing.PlanFromSellingPrice(
+                        item.SellingPrice.Value, item.StripsPerBox, item.UnitsPerStrip, multiplier, step);
                     row.New = figures;
 
                     // "Unchanged" is judged on the box price, which is what the user sees and compares.

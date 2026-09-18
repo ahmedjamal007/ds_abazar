@@ -1,16 +1,16 @@
-# Build output
+﻿# Build output
 bin/
 obj/
 *.user
 .vs/
 
-# Installers — built artefacts (7 MB each). Only the CURRENT release is tracked, so a
+# Installers â€” built artefacts (7 MB each). Only the CURRENT release is tracked, so a
 # download is one click from the repo; older builds stay local. Update the exception
 # when a new version ships, or the new installer will be silently ignored.
 installer/Output/*
-!installer/Output/Dawaii-Setup-2.3.0.exe
+!installer/Output/Dawaii-Setup-2.3.1.exe
 
-# Recovery scratch from the lost-drive incident — the recovered edits are all applied
+# Recovery scratch from the lost-drive incident â€” the recovered edits are all applied
 _recovered/
 
 # Local databases and their journals

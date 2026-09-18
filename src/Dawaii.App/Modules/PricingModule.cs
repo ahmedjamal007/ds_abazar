@@ -12,8 +12,8 @@ using Dawaii.Core.Services;
 namespace Dawaii.App.Modules
 {
     /// <summary>
-    /// Price management (V2.3 "إدارة الأسعار"): profit multiplier over cost, practical rounding, and
-    /// prices typed by hand — all previewed on the grid, then applied in one confirmed step.
+    /// Price increases (V2.3 "زيادة الأسعار"): a multiplier over the current selling price, practical
+    /// rounding, and prices typed by hand — all previewed on the grid, then applied in one confirmed step.
     ///
     /// The screen keeps a set of PENDING changes rather than writing as it goes. That is what lets the
     /// user price one group at 1.3, another at 1.2, hand-correct a few, look at the whole result, and
@@ -33,7 +33,7 @@ namespace Dawaii.App.Modules
             public PricePlanFigures Figures;
             public decimal? Multiplier;      // null when typed by hand
             public bool Manual;
-            public PriceBasis Basis;         // what the multiplier was applied to
+            public bool BelowCost;           // lands under the cost on file — shown, not refused
         }
 
         /// <summary>The grid's row model. Named (not anonymous) so cell formatting can read it back.</summary>
@@ -52,7 +52,8 @@ namespace Dawaii.App.Modules
             public string Status { get; set; }
             public bool HasPending { get; set; }
             public bool PendingManual { get; set; }
-            public bool NoCost { get; set; }
+            public bool NoPrice { get; set; }
+            public bool BelowCost { get; set; }
             public bool ItemManual { get; set; }
         }
 
@@ -72,11 +73,11 @@ namespace Dawaii.App.Modules
 
         public PricingModule()
         {
-            var title = new Label { Text = "إدارة الأسعار", Font = Theme.Title(20f), ForeColor = Theme.Primary, Dock = DockStyle.Top, Height = 44 };
+            var title = new Label { Text = "زيادة الأسعار", Font = Theme.Title(20f), ForeColor = Theme.Primary, Dock = DockStyle.Top, Height = 44 };
 
             var hint = new Label
             {
-                Text = "حدّد الأصناف، أدخل معامل الربح واضغط \"احتساب\" لمعاينة الأسعار الجديدة. لا يُحفظ شيء قبل الضغط على \"تطبيق\".",
+                Text = "حدّد الأصناف، أدخل معامل الزيادة (يُضرب في سعر البيع الحالي) واضغط \"احتساب\" للمعاينة. لا يُحفظ شيء قبل الضغط على \"تطبيق\".",
                 Dock = DockStyle.Top, Height = 24, ForeColor = Theme.TextMuted, Font = Theme.Base(10.5f)
             };
 
@@ -87,7 +88,7 @@ namespace Dawaii.App.Modules
 
             // ---- the multiplier row
             var calc = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 54, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(0, 6, 0, 6) };
-            calc.Controls.Add(new Label { Text = "معامل الربح:", AutoSize = true, Margin = new Padding(6, 12, 4, 0), Font = Theme.Base(11.5f) });
+            calc.Controls.Add(new Label { Text = "معامل الزيادة:", AutoSize = true, Margin = new Padding(6, 12, 4, 0), Font = Theme.Base(11.5f) });
             _multiplier = new NumericUpDown
             {
                 Minimum = 0.01m, Maximum = 100m, DecimalPlaces = 2, Increment = 0.05m, Value = 1.30m,
@@ -111,7 +112,7 @@ namespace Dawaii.App.Modules
             actions.Controls.Add(Theme.ActionButton("تحديث", Reload, width: 100));
 
             _filter = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190, Font = Theme.Base(11f), Margin = new Padding(12, 8, 6, 0) };
-            _filter.Items.AddRange(new object[] { "كل الأصناف", "بدون سعر", "بدون تكلفة", "أسعار يدوية", "لديها تغيير معلّق" });
+            _filter.Items.AddRange(new object[] { "كل الأصناف", "بدون سعر", "أسعار يدوية", "لديها تغيير معلّق" });
             _filter.SelectedIndex = 0;
             _filter.SelectedIndexChanged += (s, e) => Reload();
             actions.Controls.Add(_filter);
@@ -190,9 +191,8 @@ namespace Dawaii.App.Modules
             switch (_filter.SelectedIndex)
             {
                 case 1: return items.Where(i => !i.SellingPrice.HasValue).ToList();
-                case 2: return items.Where(i => i.PurchasePrice <= 0m).ToList();
-                case 3: return items.Where(i => i.ManualPrice).ToList();
-                case 4: return items.Where(i => _pending.ContainsKey(i.Id)).ToList();
+                case 2: return items.Where(i => i.ManualPrice).ToList();
+                case 3: return items.Where(i => _pending.ContainsKey(i.Id)).ToList();
                 default: return items;
             }
         }
@@ -201,23 +201,16 @@ namespace Dawaii.App.Modules
         {
             _pending.TryGetValue(i.Id, out Pending p);
             bool noCost = i.PurchasePrice <= 0m;
+            bool noPrice = !i.SellingPrice.HasValue || i.SellingPrice.Value <= 0m;
 
             string status;
             if (p != null)
             {
-                if (p.Manual) status = "يدوي — معلّق";
-                else
-                {
-                    status = p.Figures.WasRounded ? "محسوب ومقرّب" : "محسوب";
-                    // A multiplier applied to the shelf price rather than to a cost has to say so:
-                    // it is a different kind of number, and the pharmacist should know which they got.
-                    if (p.Basis == PriceBasis.SellingPrice) status += " من سعر البيع";
-                    status += " — معلّق";
-                }
+                status = p.Manual ? "يدوي" : p.Figures.WasRounded ? "محسوب ومقرّب" : "محسوب";
+                if (p.BelowCost) status += " ⚠ أقل من التكلفة";
+                status += " — معلّق";
             }
-            else if (noCost && !i.SellingPrice.HasValue) status = "بدون تكلفة ولا سعر";
-            else if (noCost) status = "بدون تكلفة (يُحسب من سعر البيع)";
-            else if (!i.SellingPrice.HasValue) status = "بدون سعر";
+            else if (noPrice) status = "بدون سعر — يُسعَّر عند أول توريد";
             else if (i.ManualPrice) status = "يدوي";
             else status = "";
 
@@ -236,7 +229,8 @@ namespace Dawaii.App.Modules
                 Status = status,
                 HasPending = p != null,
                 PendingManual = p != null && p.Manual,
-                NoCost = noCost,
+                NoPrice = noPrice,
+                BelowCost = p != null && p.BelowCost,
                 ItemManual = i.ManualPrice
             };
         }
@@ -252,11 +246,11 @@ namespace Dawaii.App.Modules
             string col = _grid.Columns[e.ColumnIndex].DataPropertyName;
             bool isNewCol = col == "NewBox" || col == "NewStrip" || col == "Multiplier" || col == "Status";
 
-            if (row.NoCost) e.CellStyle.ForeColor = Theme.TextMuted;
+            if (row.NoPrice) e.CellStyle.ForeColor = Theme.TextMuted;
             if (row.HasPending && isNewCol)
             {
                 e.CellStyle.BackColor = row.PendingManual ? Color.FromArgb(255, 244, 222) : Color.FromArgb(226, 243, 236);
-                e.CellStyle.ForeColor = row.PendingManual ? Color.FromArgb(160, 90, 0) : Theme.PrimaryDark;
+                e.CellStyle.ForeColor = row.BelowCost ? Theme.Danger : row.PendingManual ? Color.FromArgb(160, 90, 0) : Theme.PrimaryDark;
                 e.CellStyle.Font = Theme.Base(11f, FontStyle.Bold);
             }
             else if (row.ItemManual && col == "Status")
@@ -301,7 +295,7 @@ namespace Dawaii.App.Modules
             {
                 var plan = Session.Services.Pricing.Preview(Session.CurrentUser, ids, _multiplier.Value, _includeManual.Checked);
 
-                int planned = 0, noCost = 0, manualSkipped = 0, unchanged = 0, keptManual = 0, fromSelling = 0;
+                int planned = 0, noPrice = 0, manualSkipped = 0, unchanged = 0, keptManual = 0, belowCost = 0;
                 foreach (PricePlanRow r in plan)
                 {
                     switch (r.Status)
@@ -314,11 +308,11 @@ namespace Dawaii.App.Modules
                                 keptManual++;
                                 break;
                             }
-                            _pending[r.Item.Id] = new Pending { Figures = r.New, Multiplier = r.Multiplier, Manual = false, Basis = r.Basis };
+                            _pending[r.Item.Id] = new Pending { Figures = r.New, Multiplier = r.Multiplier, Manual = false, BelowCost = r.BelowCost };
                             planned++;
-                            if (r.Basis == PriceBasis.SellingPrice) fromSelling++;
+                            if (r.BelowCost) belowCost++;
                             break;
-                        case PricePlanStatus.NoCost: noCost++; break;
+                        case PricePlanStatus.NoPrice: noPrice++; break;
                         case PricePlanStatus.ManualSkipped: manualSkipped++; break;
                         case PricePlanStatus.Unchanged:
                             _pending.Remove(r.Item.Id);
@@ -329,13 +323,13 @@ namespace Dawaii.App.Modules
 
                 Reload();
 
-                string report = "تم احتساب " + planned + " سعراً بمعامل " + _multiplier.Value.ToString("0.00") + ".";
-                if (fromSelling > 0)
-                    report += "\n" + fromSelling + " منها بدون تكلفة شراء مسجلة، فحُسب من سعر البيع الحالي × المعامل.";
+                string report = "تم احتساب " + planned + " سعراً: سعر البيع الحالي × " + _multiplier.Value.ToString("0.00") + ".";
+                if (belowCost > 0)
+                    report += "\n⚠ " + belowCost + " صنف سيصبح سعره أقل من تكلفة الشراء — راجعه قبل التطبيق.";
                 if (unchanged > 0) report += "\n" + unchanged + " صنف عند هذا السعر بالفعل.";
                 if (manualSkipped + keptManual > 0)
                     report += "\n" + (manualSkipped + keptManual) + " صنف بسعر يدوي تُرك كما هو (فعّل \"تضمين الأسعار اليدوية\" لإعادة احتسابه).";
-                if (noCost > 0) report += "\n" + noCost + " صنف بدون تكلفة ولا سعر بيع — لا يوجد ما يُحسب منه.";
+                if (noPrice > 0) report += "\n" + noPrice + " صنف بدون سعر بيع — لا يوجد ما يُزاد عليه.";
                 Msg.Info(report);
             }
             catch (DomainException ex) { Msg.Error(ex.Message); }
@@ -390,15 +384,16 @@ namespace Dawaii.App.Modules
             int calc = _pending.Count - manual;
             string groups = string.Join("، ",
                 _pending.Values.Where(p => p.Multiplier.HasValue)
-                    .GroupBy(p => new { p.Multiplier, p.Basis })
-                    .OrderBy(g => g.Key.Multiplier)
-                    .Select(g => g.Count() + " صنف × " + g.Key.Multiplier.Value.ToString("0.00") +
-                                 (g.Key.Basis == PriceBasis.SellingPrice ? " (من سعر البيع)" : "")));
+                    .GroupBy(p => p.Multiplier.Value)
+                    .OrderBy(g => g.Key)
+                    .Select(g => g.Count() + " صنف × " + g.Key.ToString("0.00")));
+            int belowCostPending = _pending.Values.Count(p => p.BelowCost);
 
             if (!Msg.Confirm(
                     "سيتم تغيير أسعار " + _pending.Count + " صنف بشكل دائم:\n" +
                     (calc > 0 ? "• محسوبة: " + groups + "\n" : "") +
                     (manual > 0 ? "• يدوية: " + manual + "\n" : "") +
+                    (belowCostPending > 0 ? "⚠ " + belowCostPending + " منها أقل من التكلفة\n" : "") +
                     "\nسيظهر السعر الجديد فوراً في نقطة البيع. متابعة؟"))
                 return;
 

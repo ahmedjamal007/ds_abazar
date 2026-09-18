@@ -1,17 +1,17 @@
-; =====================================================================
-;  دوائي (Dawaii) — Inno Setup installer (V1.2)
+﻿; =====================================================================
+;  Ø¯ÙˆØ§Ø¦ÙŠ (Dawaii) â€” Inno Setup installer (V1.2)
 ;  Asks how this PC will be used:
-;    1) كمبيوتر واحد (single)   -> local SQLite, zero setup (default)
-;    2) جهاز المدير (manager)   -> shared MySQL database on this PC (network mode, req 6)
-;    3) جهاز كاشير (counter)    -> connects to the manager's MySQL over the LAN
+;    1) ÙƒÙ…Ø¨ÙŠÙˆØªØ± ÙˆØ§Ø­Ø¯ (single)   -> local SQLite, zero setup (default)
+;    2) Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± (manager)   -> shared MySQL database on this PC (network mode, req 6)
+;    3) Ø¬Ù‡Ø§Ø² ÙƒØ§Ø´ÙŠØ± (counter)    -> connects to the manager's MySQL over the LAN
 ;
 ;  ...then what to start from:
-;    1) ترقية        -> keep the data already on this PC (default when a database is found)
-;    2) صيدلية جديدة -> start empty; the app seeds its demo catalogue on first run
-;    3) صيدلية حالية -> import the pharmacy's backup (.db for single, .sql dump for manager).
+;    1) ØªØ±Ù‚ÙŠØ©        -> keep the data already on this PC (default when a database is found)
+;    2) ØµÙŠØ¯Ù„ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø© -> start empty; the app seeds its demo catalogue on first run
+;    3) ØµÙŠØ¯Ù„ÙŠØ© Ø­Ø§Ù„ÙŠØ© -> import the pharmacy's backup (.db for single, .sql dump for manager).
 ;                       The app reshapes it to the current schema the first time it starts.
 ;  Nothing is ever deleted: any database already on the PC is renamed aside, not overwritten.
-;  (On a manager device "صيدلية جديدة" does not erase an existing MySQL `dawaii` database — this
+;  (On a manager device "ØµÙŠØ¯Ù„ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø©" does not erase an existing MySQL `dawaii` database â€” this
 ;   installer never drops one. Drop it by hand first if a manager PC is being reused.)
 ;
 ;  Build the app first (Release), then compile with Inno Setup 6:
@@ -19,8 +19,8 @@
 ;     ISCC Dawaii.iss
 ; =====================================================================
 
-#define AppName "دوائي Dawaii"
-#define AppVersion "2.3.0"
+#define AppName "Ø¯ÙˆØ§Ø¦ÙŠ Dawaii"
+#define AppVersion "2.3.1"
 #define ExeName "Dawaii.exe"
 #define AppBin "..\src\Dawaii.App\bin\Release\net48"
 #define DbDir "..\db"
@@ -61,18 +61,18 @@ Source: "{#DbDir}\seed.mysql.sql"; DestDir: "{app}\install"; Flags: ignoreversio
 Name: "{commonappdata}\Dawaii"; Permissions: users-modify
 
 [Icons]
-Name: "{group}\دوائي Dawaii"; Filename: "{app}\{#ExeName}"
-Name: "{autodesktop}\دوائي Dawaii"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
+Name: "{group}\Ø¯ÙˆØ§Ø¦ÙŠ Dawaii"; Filename: "{app}\{#ExeName}"
+Name: "{autodesktop}\Ø¯ÙˆØ§Ø¦ÙŠ Dawaii"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
 
 [Tasks]
-Name: "desktopicon"; Description: "إنشاء اختصار على سطح المكتب"; GroupDescription: "اختصارات:"
+Name: "desktopicon"; Description: "Ø¥Ù†Ø´Ø§Ø¡ Ø§Ø®ØªØµØ§Ø± Ø¹Ù„Ù‰ Ø³Ø·Ø­ Ø§Ù„Ù…ÙƒØªØ¨"; GroupDescription: "Ø§Ø®ØªØµØ§Ø±Ø§Øª:"
 
 [Run]
-Filename: "{app}\{#ExeName}"; Description: "تشغيل دوائي"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#ExeName}"; Description: "ØªØ´ØºÙŠÙ„ Ø¯ÙˆØ§Ø¦ÙŠ"; Flags: nowait postinstall skipifsilent
 
 [Code]
 const
-  DataKeep = 0;    { leave this PC's database alone — just upgrade the program }
+  DataKeep = 0;    { leave this PC's database alone â€” just upgrade the program }
   DataNew = 1;     { new pharmacy: start from an empty database (the app seeds the demo) }
   DataImport = 2;  { existing pharmacy: bring its backup onto this PC }
 
@@ -83,7 +83,7 @@ var
   ManagerPage: TInputQueryWizardPage;  { root pwd + app pwd }
   CounterPage: TInputQueryWizardPage;  { manager IP + app pwd }
 
-{ Where the single-PC backend keeps its database — must match AppConfig.DatabasePath. }
+{ Where the single-PC backend keeps its database â€” must match AppConfig.DatabasePath. }
 function LocalDbPath: string;
 begin
   Result := ExpandConstant('{commonappdata}\Dawaii\dawaii.db');
@@ -92,19 +92,19 @@ end;
 procedure InitializeWizard;
 begin
   ModePage := CreateInputOptionPage(wpSelectDir,
-    'طريقة الاستخدام', 'كيف سيُستخدم هذا الجهاز؟',
-    'اختر واحداً:', True, False);
-  ModePage.Add('كمبيوتر واحد فقط (الأبسط — بدون إعداد)');
-  ModePage.Add('جهاز المدير (يحتفظ بقاعدة البيانات ويشاركها على الشبكة)');
-  ModePage.Add('جهاز كاشير إضافي (يتصل بجهاز المدير)');
+    'Ø·Ø±ÙŠÙ‚Ø© Ø§Ù„Ø§Ø³ØªØ®Ø¯Ø§Ù…', 'ÙƒÙŠÙ Ø³ÙŠÙØ³ØªØ®Ø¯Ù… Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²ØŸ',
+    'Ø§Ø®ØªØ± ÙˆØ§Ø­Ø¯Ø§Ù‹:', True, False);
+  ModePage.Add('ÙƒÙ…Ø¨ÙŠÙˆØªØ± ÙˆØ§Ø­Ø¯ ÙÙ‚Ø· (Ø§Ù„Ø£Ø¨Ø³Ø· â€” Ø¨Ø¯ÙˆÙ† Ø¥Ø¹Ø¯Ø§Ø¯)');
+  ModePage.Add('Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± (ÙŠØ­ØªÙØ¸ Ø¨Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª ÙˆÙŠØ´Ø§Ø±ÙƒÙ‡Ø§ Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø¨ÙƒØ©)');
+  ModePage.Add('Ø¬Ù‡Ø§Ø² ÙƒØ§Ø´ÙŠØ± Ø¥Ø¶Ø§ÙÙŠ (ÙŠØªØµÙ„ Ø¨Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ±)');
   ModePage.SelectedValueIndex := 0;
 
   DataPage := CreateInputOptionPage(ModePage.ID,
-    'بيانات الصيدلية', 'ما الذي تبدأ به على هذا الجهاز؟',
-    'اختر واحداً:', True, False);
-  DataPage.Add('ترقية — الإبقاء على البيانات الموجودة على هذا الجهاز');
-  DataPage.Add('صيدلية جديدة — البدء ببيانات تجريبية للتدريب');
-  DataPage.Add('صيدلية حالية — استيراد نسخة احتياطية من بياناتها');
+    'Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ØµÙŠØ¯Ù„ÙŠØ©', 'Ù…Ø§ Ø§Ù„Ø°ÙŠ ØªØ¨Ø¯Ø£ Ø¨Ù‡ Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²ØŸ',
+    'Ø§Ø®ØªØ± ÙˆØ§Ø­Ø¯Ø§Ù‹:', True, False);
+  DataPage.Add('ØªØ±Ù‚ÙŠØ© â€” Ø§Ù„Ø¥Ø¨Ù‚Ø§Ø¡ Ø¹Ù„Ù‰ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²');
+  DataPage.Add('ØµÙŠØ¯Ù„ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø© â€” Ø§Ù„Ø¨Ø¯Ø¡ Ø¨Ø¨ÙŠØ§Ù†Ø§Øª ØªØ¬Ø±ÙŠØ¨ÙŠØ© Ù„Ù„ØªØ¯Ø±ÙŠØ¨');
+  DataPage.Add('ØµÙŠØ¯Ù„ÙŠØ© Ø­Ø§Ù„ÙŠØ© â€” Ø§Ø³ØªÙŠØ±Ø§Ø¯ Ù†Ø³Ø®Ø© Ø§Ø­ØªÙŠØ§Ø·ÙŠØ© Ù…Ù† Ø¨ÙŠØ§Ù†Ø§ØªÙ‡Ø§');
   { Default to the safe answer: upgrade where data exists, new pharmacy on a clean PC. }
   if FileExists(LocalDbPath) then
     DataPage.SelectedValueIndex := DataKeep
@@ -112,22 +112,22 @@ begin
     DataPage.SelectedValueIndex := DataNew;
 
   ImportPage := CreateInputFilePage(DataPage.ID,
-    'استيراد نسخة احتياطية', 'ملف بيانات الصيدلية',
-    'اختر ملف النسخة الاحتياطية. البيانات الموجودة على هذا الجهاز تُحفظ بجوارها ولا تُحذف،' + #13#10 +
-    'ويقوم البرنامج بتحديث النسخة المستوردة إلى الإصدار الجديد عند أول تشغيل.');
-  ImportPage.Add('ملف النسخة:', 'نسخة دوائي|*.db;*.sql|كل الملفات|*.*', '.db');
+    'Ø§Ø³ØªÙŠØ±Ø§Ø¯ Ù†Ø³Ø®Ø© Ø§Ø­ØªÙŠØ§Ø·ÙŠØ©', 'Ù…Ù„Ù Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ØµÙŠØ¯Ù„ÙŠØ©',
+    'Ø§Ø®ØªØ± Ù…Ù„Ù Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ø§Ø­ØªÙŠØ§Ø·ÙŠØ©. Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø² ØªÙØ­ÙØ¸ Ø¨Ø¬ÙˆØ§Ø±Ù‡Ø§ ÙˆÙ„Ø§ ØªÙØ­Ø°ÙØŒ' + #13#10 +
+    'ÙˆÙŠÙ‚ÙˆÙ… Ø§Ù„Ø¨Ø±Ù†Ø§Ù…Ø¬ Ø¨ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ù…Ø³ØªÙˆØ±Ø¯Ø© Ø¥Ù„Ù‰ Ø§Ù„Ø¥ØµØ¯Ø§Ø± Ø§Ù„Ø¬Ø¯ÙŠØ¯ Ø¹Ù†Ø¯ Ø£ÙˆÙ„ ØªØ´ØºÙŠÙ„.');
+  ImportPage.Add('Ù…Ù„Ù Ø§Ù„Ù†Ø³Ø®Ø©:', 'Ù†Ø³Ø®Ø© Ø¯ÙˆØ§Ø¦ÙŠ|*.db;*.sql|ÙƒÙ„ Ø§Ù„Ù…Ù„ÙØ§Øª|*.*', '.db');
 
   ManagerPage := CreateInputQueryPage(ImportPage.ID,
-    'إعداد قاعدة بيانات المدير', 'بيانات MySQL على هذا الجهاز',
-    'يجب أن يكون خادم MySQL مثبتاً ويعمل كخدمة. أدخل كلمتي المرور:');
-  ManagerPage.Add('كلمة مرور root في MySQL:', True);
-  ManagerPage.Add('كلمة مرور مستخدم التطبيق (dawaii_app):', True);
+    'Ø¥Ø¹Ø¯Ø§Ø¯ Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…Ø¯ÙŠØ±', 'Ø¨ÙŠØ§Ù†Ø§Øª MySQL Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²',
+    'ÙŠØ¬Ø¨ Ø£Ù† ÙŠÙƒÙˆÙ† Ø®Ø§Ø¯Ù… MySQL Ù…Ø«Ø¨ØªØ§Ù‹ ÙˆÙŠØ¹Ù…Ù„ ÙƒØ®Ø¯Ù…Ø©. Ø£Ø¯Ø®Ù„ ÙƒÙ„Ù…ØªÙŠ Ø§Ù„Ù…Ø±ÙˆØ±:');
+  ManagerPage.Add('ÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± root ÙÙŠ MySQL:', True);
+  ManagerPage.Add('ÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ (dawaii_app):', True);
 
   CounterPage := CreateInputQueryPage(ManagerPage.ID,
-    'الاتصال بجهاز المدير', 'عنوان جهاز المدير على الشبكة',
-    'أدخل عنوان IP لجهاز المدير وكلمة مرور مستخدم التطبيق:');
-  CounterPage.Add('عنوان IP لجهاز المدير:', False);
-  CounterPage.Add('كلمة مرور مستخدم التطبيق (dawaii_app):', True);
+    'Ø§Ù„Ø§ØªØµØ§Ù„ Ø¨Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ±', 'Ø¹Ù†ÙˆØ§Ù† Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø¨ÙƒØ©',
+    'Ø£Ø¯Ø®Ù„ Ø¹Ù†ÙˆØ§Ù† IP Ù„Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± ÙˆÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„ØªØ·Ø¨ÙŠÙ‚:');
+  CounterPage.Add('Ø¹Ù†ÙˆØ§Ù† IP Ù„Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ±:', False);
+  CounterPage.Add('ÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ (dawaii_app):', True);
 end;
 
 function Mode: Integer;
@@ -138,7 +138,7 @@ end;
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
-  { A counter holds no data of its own — its pharmacy lives in the manager's database. }
+  { A counter holds no data of its own â€” its pharmacy lives in the manager's database. }
   if PageID = DataPage.ID then Result := Mode = 2;
   if PageID = ImportPage.ID then
     Result := (Mode = 2) or (DataPage.SelectedValueIndex <> DataImport);
@@ -172,7 +172,7 @@ begin
   f := Trim(ImportPage.Values[0]);
   if not FileExists(f) then
   begin
-    MsgBox('لم يتم العثور على الملف المحدد.', mbError, MB_OK);
+    MsgBox('Ù„Ù… ÙŠØªÙ… Ø§Ù„Ø¹Ø«ÙˆØ± Ø¹Ù„Ù‰ Ø§Ù„Ù…Ù„Ù Ø§Ù„Ù…Ø­Ø¯Ø¯.', mbError, MB_OK);
     Result := False;
     Exit;
   end;
@@ -182,7 +182,7 @@ begin
     { Manager device: the backup is a mysqldump, loaded by setup_mysql.ps1. }
     if Lowercase(ExtractFileExt(f)) <> '.sql' then
     begin
-      MsgBox('في وضع الشبكة يجب اختيار نسخة MySQL بامتداد sql.', mbError, MB_OK);
+      MsgBox('ÙÙŠ ÙˆØ¶Ø¹ Ø§Ù„Ø´Ø¨ÙƒØ© ÙŠØ¬Ø¨ Ø§Ø®ØªÙŠØ§Ø± Ù†Ø³Ø®Ø© MySQL Ø¨Ø§Ù…ØªØ¯Ø§Ø¯ sql.', mbError, MB_OK);
       Result := False;
     end;
     Exit;
@@ -190,7 +190,7 @@ begin
 
   if not IsSqliteFile(f) then
   begin
-    MsgBox('هذا الملف ليس نسخة احتياطية لقاعدة بيانات دوائي. اختر ملفاً بامتداد db.', mbError, MB_OK);
+    MsgBox('Ù‡Ø°Ø§ Ø§Ù„Ù…Ù„Ù Ù„ÙŠØ³ Ù†Ø³Ø®Ø© Ø§Ø­ØªÙŠØ§Ø·ÙŠØ© Ù„Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø¯ÙˆØ§Ø¦ÙŠ. Ø§Ø®ØªØ± Ù…Ù„ÙØ§Ù‹ Ø¨Ø§Ù…ØªØ¯Ø§Ø¯ db.', mbError, MB_OK);
     Result := False;
   end;
 end;
@@ -202,7 +202,7 @@ begin
   if Mode = 0 then
     Exit; { single computer: no ini, app defaults to local SQLite }
 
-  ini := '# دوائي — network configuration (written by installer)' + #13#10 + 'mode=server' + #13#10;
+  ini := '# Ø¯ÙˆØ§Ø¦ÙŠ â€” network configuration (written by installer)' + #13#10 + 'mode=server' + #13#10;
   if Mode = 1 then
     ini := ini + 'host=localhost' + #13#10 + 'password=' + ManagerPage.Values[1] + #13#10
   else
@@ -247,7 +247,7 @@ begin
   ArchiveLocalDb('before-import');
   DropWalFiles;
   if not FileCopy(ImportPage.Values[0], LocalDbPath, False) then
-    MsgBox('تعذّر نسخ ملف النسخة الاحتياطية إلى:' + #13#10 + LocalDbPath, mbError, MB_OK);
+    MsgBox('ØªØ¹Ø°Ù‘Ø± Ù†Ø³Ø® Ù…Ù„Ù Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ø§Ø­ØªÙŠØ§Ø·ÙŠØ© Ø¥Ù„Ù‰:' + #13#10 + LocalDbPath, mbError, MB_OK);
 end;
 
 procedure SetupManagerDatabase;
@@ -262,9 +262,9 @@ begin
   if DataPage.SelectedValueIndex = DataImport then
     params := params + ' -RestoreFile "' + ImportPage.Values[0] + '"';
   if not Exec('powershell.exe', params, '', SW_SHOW, ewWaitUntilTerminated, rc) then
-    MsgBox('تعذّر تشغيل إعداد MySQL. تأكد من تثبيت MySQL Server أولاً.', mbError, MB_OK)
+    MsgBox('ØªØ¹Ø°Ù‘Ø± ØªØ´ØºÙŠÙ„ Ø¥Ø¹Ø¯Ø§Ø¯ MySQL. ØªØ£ÙƒØ¯ Ù…Ù† ØªØ«Ø¨ÙŠØª MySQL Server Ø£ÙˆÙ„Ø§Ù‹.', mbError, MB_OK)
   else if rc <> 0 then
-    MsgBox('انتهى إعداد قاعدة البيانات برمز ' + IntToStr(rc) + '. راجع الرسائل.', mbInformation, MB_OK);
+    MsgBox('Ø§Ù†ØªÙ‡Ù‰ Ø¥Ø¹Ø¯Ø§Ø¯ Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø¨Ø±Ù…Ø² ' + IntToStr(rc) + '. Ø±Ø§Ø¬Ø¹ Ø§Ù„Ø±Ø³Ø§Ø¦Ù„.', mbInformation, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

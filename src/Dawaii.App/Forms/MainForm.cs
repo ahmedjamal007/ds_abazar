@@ -159,10 +159,10 @@ namespace Dawaii.App.Forms
             // screen and never sees it (V1.8, restored in V2.3).
             if (Session.CanManageInventory)
             {
-                // Prices are set by the same people who enter deliveries (V2.3): a profit multiplier
-                // over cost, rounded to a sayable figure, or a price typed by hand — previewed, then
-                // applied. Listed just below the stockroom, which is where the cost it multiplies comes from.
-                AddNavItem("إدارة الأسعار", "cash", () => new PricingModule());
+                // Prices are raised by the same people who enter deliveries (V2.3): a multiplier over
+                // the current selling price, rounded to a sayable figure, or a price typed by hand —
+                // previewed, then applied. Listed just below the stockroom.
+                AddNavItem("زيادة الأسعار", "cash", () => new PricingModule());
                 AddNavItem("الأصناف والمخزون", "box", () => new ItemsModule());
             }
 

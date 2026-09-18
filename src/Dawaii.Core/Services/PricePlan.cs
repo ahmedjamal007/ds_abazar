@@ -4,7 +4,7 @@ using Dawaii.Core.Models;
 namespace Dawaii.Core.Services
 {
     /// <summary>The three prices that follow from one rounded strip price — see
-    /// <see cref="BatchPricing.PlanFromCost"/>.</summary>
+    /// <see cref="BatchPricing.PlanFromSellingPrice"/>.</summary>
     public class PricePlanFigures
     {
         /// <summary>Strip cost × multiplier, before rounding — shown so the user sees what the rounding did.</summary>
@@ -19,26 +19,15 @@ namespace Dawaii.Core.Services
         public bool WasRounded { get; set; }
     }
 
-    /// <summary>What the multiplier was applied to.</summary>
-    public enum PriceBasis
-    {
-        /// <summary>The purchase cost on file — the normal case.</summary>
-        Cost,
-
-        /// <summary>The current selling price, because no cost is on file (V2.3). A drug bought before
-        /// costs were recorded still has a price on the shelf, and that is what there is to multiply.</summary>
-        SellingPrice
-    }
-
     /// <summary>Why a row in a price plan did or did not get a new price.</summary>
     public enum PricePlanStatus
     {
         /// <summary>A new price was calculated and is waiting to be applied.</summary>
         Planned,
 
-        /// <summary>The item has neither a purchase cost nor a current selling price, so there is
-        /// nothing at all to multiply.</summary>
-        NoCost,
+        /// <summary>The item has no selling price on file, so there is nothing to increase. (Such an
+        /// item is hidden from the POS anyway; it gets a price from its first delivery.)</summary>
+        NoPrice,
 
         /// <summary>The item's price was set by hand and the plan was told to leave such items alone.</summary>
         ManualSkipped,
@@ -58,8 +47,10 @@ namespace Dawaii.Core.Services
         public decimal Multiplier { get; set; }
         public PricePlanStatus Status { get; set; }
 
-        /// <summary>Cost, or — when no cost is on file — the current selling price.</summary>
-        public PriceBasis Basis { get; set; }
+        /// <summary>True when the new box price would sit below the cost on file — shown as a warning,
+        /// not refused: a multiplier under 1 is a discount the pharmacist chose, and cost is only known
+        /// for drugs that came in through a recorded delivery.</summary>
+        public bool BelowCost => New != null && Item.PurchasePrice > 0m && New.BoxPrice < CostPerBox;
 
         /// <summary>What a box costs the pharmacy — cost per unit × units per box.</summary>
         public decimal CostPerBox => Item.PurchasePrice * BatchPricing.UnitsPerBox(Item.StripsPerBox, Item.UnitsPerStrip);

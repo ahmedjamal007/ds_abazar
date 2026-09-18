@@ -14,14 +14,14 @@ namespace Dawaii.Core.Services
     /// Strip and unit prices are ALWAYS computed, never stored as editable values, so changing the box
     /// price or the strips-per-box count re-derives them with no way for the two to drift apart.
     ///
-    /// V2.3 adds the one thing this rule used to say it did not have: a profit multiplier, applied on
-    /// the إدارة الأسعار screen, with the result rounded to a price a customer can actually be charged.
-    /// Both live here rather than in a second utility, so there is still exactly one place that knows
-    /// how a box, a strip and a single unit relate.
+    /// V2.3 adds the one thing this rule used to say it did not have: a multiplier that raises the
+    /// shelf price, applied on the زيادة الأسعار screen, with the result rounded to a price a customer
+    /// can actually be charged. Both live here rather than in a second utility, so there is still
+    /// exactly one place that knows how a box, a strip and a single unit relate.
     /// </summary>
     public static class BatchPricing
     {
-        // ---------------- profit multiplier + practical rounding (V2.3) ----------------
+        // ---------------- price increase multiplier + practical rounding (V2.3) ----------------
 
         /// <summary>
         /// Rounds a selling price to a figure a pharmacy can actually charge.
@@ -49,7 +49,10 @@ namespace Dawaii.Core.Services
         {
             if (price <= 0m) return 0m;
             decimal s = step > 0m ? step : StepFor(price);
-            return decimal.Round(price / s, 0, MidpointRounding.AwayFromZero) * s;
+            decimal rounded = decimal.Round(price / s, 0, MidpointRounding.AwayFromZero) * s;
+            // A house step bigger than the price itself (step 1000 on a 78-pound item) must not round
+            // it to nothing: a positive price is never less than one step.
+            return rounded > 0m ? rounded : s;
         }
 
         /// <summary>The rounding step this price falls into under the magnitude rule.</summary>
@@ -63,58 +66,28 @@ namespace Dawaii.Core.Services
         }
 
         /// <summary>
-        /// The selling prices that follow from applying a profit multiplier to an item's cost.
+        /// The selling prices that follow from raising an item's current price by a multiplier.
         ///
-        /// The multiplier is applied to the STRIP cost and the result rounded there, and the box is then
+        /// The multiplier is applied to the STRIP price and the result rounded there, and the box is then
         /// rebuilt as strip × strips-per-box. Rounding the box instead can leave the strip — the unit a
         /// customer most often buys — at something like 1,866.67; rounding the strip keeps both clean and
         /// keeps the box an exact multiple of the strip, which is the relationship the rest of the app
         /// relies on. A box that is a single strip rounds the box directly, which is the same thing.
         ///
-        /// The rounded price is never allowed below cost: a small multiplier plus a round-down could
-        /// otherwise quietly sell at a loss, so the step is taken upward instead.
-        /// </summary>
-        public static PricePlanFigures PlanFromCost(decimal purchasePerUnit, int stripsPerBox, int unitsPerStrip,
-            decimal multiplier, decimal step = 0m)
-        {
-            if (purchasePerUnit <= 0m) throw new ValidationException("لا توجد تكلفة شراء للصنف.");
-            return PlanFromBase(purchasePerUnit, stripsPerBox, unitsPerStrip, multiplier, step, floorAtBase: true);
-        }
-
-        /// <summary>
-        /// The same plan taken from the item's CURRENT SELLING PRICE instead of its cost — for a drug
-        /// that has a price on the shelf but no cost on file (V2.3). "Multiply what it sells for now" is
-        /// the only meaningful reading of a multiplier when there is nothing else to multiply.
-        ///
-        /// There is no floor here: with no cost known, the app cannot tell a loss from a discount, and a
-        /// multiplier under 1 on a selling price is a discount the pharmacist chose. It is said on screen.
+        /// There is no floor: a multiplier under 1 is a discount the pharmacist chose. The screen shows
+        /// a warning when the result lands below a known cost, and leaves the decision to them.
         /// </summary>
         public static PricePlanFigures PlanFromSellingPrice(decimal sellingPerUnit, int stripsPerBox, int unitsPerStrip,
             decimal multiplier, decimal step = 0m)
         {
             if (sellingPerUnit <= 0m) throw new ValidationException("لا يوجد سعر بيع حالي للصنف.");
-            return PlanFromBase(sellingPerUnit, stripsPerBox, unitsPerStrip, multiplier, step, floorAtBase: false);
-        }
-
-        private static PricePlanFigures PlanFromBase(decimal basePerUnit, int stripsPerBox, int unitsPerStrip,
-            decimal multiplier, decimal step, bool floorAtBase)
-        {
-            if (multiplier <= 0m) throw new ValidationException("معامل الربح يجب أن يكون أكبر من صفر.");
+            if (multiplier <= 0m) throw new ValidationException("معامل الزيادة يجب أن يكون أكبر من صفر.");
 
             int strips = Math.Max(1, stripsPerBox);
             int units = Math.Max(1, unitsPerStrip);
 
-            decimal stripBase = basePerUnit * units;
-            decimal rawStrip = stripBase * multiplier;
+            decimal rawStrip = sellingPerUnit * units * multiplier;
             decimal strip = RoundToPractical(rawStrip, step);
-
-            // Never below cost, whatever the rounding did.
-            if (floorAtBase && strip < stripBase)
-            {
-                decimal s = step > 0m ? step : StepFor(rawStrip);
-                strip = decimal.Ceiling(stripBase / s) * s;
-            }
-
             decimal box = strip * strips;
             return new PricePlanFigures
             {
