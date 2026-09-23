@@ -222,8 +222,11 @@ namespace Dawaii.App.Forms
 
         private void NewInvoice()
         {
-            using (var f = new PurchaseInvoiceForm(_supplier)) f.ShowDialog(this);
-            Reload();
+            // The delivery window is modeless so it can be minimized mid-typing. That only helps if
+            // this listing steps aside: it is modal, and would go on blocking the app behind it.
+            bool refused = PurchaseInvoiceForm.IsOpen;   // it will surface the open one instead
+            PurchaseInvoiceForm.OpenAlongside(_supplier, this);
+            if (!refused) Close();
         }
 
         /// <summary>

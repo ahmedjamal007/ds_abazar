@@ -19,8 +19,8 @@
 ;     ISCC Dawaii.iss
 ; =====================================================================
 
-#define AppName "Ø¯ÙˆØ§Ø¦ÙŠ Dawaii"
-#define AppVersion "2.3.1"
+#define AppName "Dawaii"
+#define AppVersion "2.4"
 #define ExeName "Dawaii.exe"
 #define AppBin "..\src\Dawaii.App\bin\Release\net48"
 #define DbDir "..\db"

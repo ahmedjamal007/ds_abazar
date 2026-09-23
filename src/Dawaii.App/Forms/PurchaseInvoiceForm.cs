@@ -36,6 +36,17 @@ namespace Dawaii.App.Forms
         /// <summary>The invoice being corrected, or null when a new one is being filed.</summary>
         private readonly PurchaseInvoice _editing;
 
+        /// <summary>
+        /// The draft this screen is working inside, or 0 when it has never been set aside. A NEW
+        /// delivery keeps its typing when the screen closes; an edit of an invoice already on file
+        /// does not — see <see cref="PurchaseDrafts"/>.
+        /// </summary>
+        private int _draftNumber;
+
+        /// <summary>True once the invoice is saved, so closing afterwards does not file a draft of
+        /// something that is already on the books.</summary>
+        private bool _committed;
+
         private readonly List<PurchaseInvoiceLine> _lines = new List<PurchaseInvoiceLine>();
 
         private TextBox _representative, _invoiceNumber;
@@ -49,6 +60,103 @@ namespace Dawaii.App.Forms
 
         /// <summary>Files a new delivery from this company.</summary>
         public PurchaseInvoiceForm(Supplier supplier) : this(supplier, null) { }
+
+        /// <summary>Reopens a delivery that was set aside, exactly as it was left.</summary>
+        public static PurchaseInvoiceForm Resume(PurchaseDrafts.Draft draft)
+        {
+            if (draft == null) throw new ArgumentNullException(nameof(draft));
+            var form = new PurchaseInvoiceForm(draft.Supplier, null);
+            form.LoadDraft(draft);
+            return form;
+        }
+
+        // ---------------- one delivery window, open beside the app ----------------
+
+        /// <summary>
+        /// The delivery window currently open, or null.
+        ///
+        /// A delivery being typed is shown MODELESSLY (V2.3.2) so it can be minimized while the
+        /// customer who just walked in is served. A minimize button on its own would not have helped:
+        /// a modal window keeps the main window disabled underneath it, so the pharmacist would have
+        /// been left staring at a program that ignores every click.
+        ///
+        /// Only one may be open. Two would be filing into the same draft, and whichever was saved
+        /// second would quietly overwrite the first.
+        /// </summary>
+        private static PurchaseInvoiceForm _open;
+
+        /// <summary>Opens a new delivery from this company beside the app.</summary>
+        public static void OpenAlongside(Supplier supplier, Form owner, Action onClosed = null)
+            => Present(() => new PurchaseInvoiceForm(supplier), owner, onClosed);
+
+        /// <summary>Reopens a delivery that was set aside, beside the app.</summary>
+        public static void ResumeAlongside(PurchaseDrafts.Draft draft, Form owner, Action onClosed = null)
+            => Present(() => Resume(draft), owner, onClosed);
+
+        /// <summary>True while a delivery is being typed, whether or not its window is minimized.</summary>
+        public static bool IsOpen => _open != null && !_open.IsDisposed;
+
+        private static void Present(Func<PurchaseInvoiceForm> build, Form owner, Action onClosed)
+        {
+            if (!TryPresent(build, owner, onClosed))
+                Msg.Info("هناك فاتورة مفتوحة بالفعل.\n" +
+                         "أكمل إدخالها أو احفظها كمسودة قبل فتح فاتورة أخرى.");
+        }
+
+        /// <summary>
+        /// Opens the delivery, or surfaces the one already open and returns false. The telling apart
+        /// is kept out of <see cref="Present"/> so it can be exercised without a message box in the
+        /// way — the box is the part that cannot be tested, not the rule.
+        /// </summary>
+        private static bool TryPresent(Func<PurchaseInvoiceForm> build, Form owner, Action onClosed)
+        {
+            if (IsOpen)
+            {
+                // Minimized is the likely case: the pharmacist put it aside, served someone, and has
+                // now clicked "new invoice" having forgotten it. Bring back what they already typed.
+                if (_open.WindowState == FormWindowState.Minimized)
+                    _open.WindowState = FormWindowState.Normal;
+                _open.Activate();
+                return false;
+            }
+
+            PurchaseInvoiceForm form = build();
+
+            // Owned by the MAIN window, not by whatever dialog opened this. A listing that opened a
+            // delivery is itself modal and closes straight after, and a window owned by a form that
+            // has closed goes with it — taking the pharmacist's typing along.
+            Form root = owner;
+            while (root != null && root.Owner != null) root = root.Owner;
+            form.Owner = root;
+
+            form.StartPosition = FormStartPosition.CenterScreen;
+            form.ShowInTaskbar = true;      // so a minimized delivery is findable from the taskbar
+            form.FormClosed += (s, e) =>
+            {
+                _open = null;
+                if (onClosed != null) onClosed();
+            };
+
+            _open = form;
+            form.Show();
+            return true;
+        }
+
+        /// <summary>
+        /// Shuts the open delivery without asking. Logging out only: the drafts are cleared a moment
+        /// later anyway, so offering to keep this one would be offering something that cannot survive.
+        /// </summary>
+        public static void CloseOpen()
+        {
+            if (!IsOpen) return;
+            PurchaseInvoiceForm form = _open;
+            _open = null;
+            // Belt and braces. Closing in code does not prompt anyway — OnFormClosing only asks a user
+            // who clicked the X — but saying it here means a later change there cannot start putting a
+            // question in front of someone who is already on their way out.
+            form._committed = true;
+            form.Close();
+        }
 
         /// <summary>Corrects an invoice already on file. It is re-read here rather than taken from the
         /// listing that opened it — a listing row carries no lines, and correcting an invoice whose
@@ -73,7 +181,9 @@ namespace Dawaii.App.Forms
 
             Text = correcting ? "تعديل فاتورة مشتريات" : "فاتورة مشتريات جديدة";
             FormBorderStyle = FormBorderStyle.Sizable;
-            MinimizeBox = false;
+            // A delivery being typed can be minimized and come back untouched; a correction cannot,
+            // because it is shown modally over the listing it was opened from (see OpenAlongside).
+            MinimizeBox = !correcting;
             ClientSize = new Size(900, 700);
 
             var title = new Label
@@ -115,8 +225,13 @@ namespace Dawaii.App.Forms
                 // against whichever company happened to be first.
                 if (_supplier != null && companies.All(c => c.Id != editing.SupplierId))
                     companies.Insert(0, _supplier);
-                _company.DataSource = companies;
-                _company.SelectedIndex = companies.FindIndex(c => c.Id == editing.SupplierId);
+
+                // Items rather than DataSource. A DataSource is only realised once the control has a
+                // binding context, and a combo that has not been put on the form yet has none — so the
+                // list stayed empty, selecting the invoice's own company threw on an empty list, and
+                // correcting ANY invoice died inside the "تعذّر فتح الفاتورة" handler that wraps it.
+                _company.Items.AddRange(companies.ToArray());
+                _company.SelectedItem = companies.FirstOrDefault(c => c.Id == editing.SupplierId);
                 header.Controls.Add(Caption("الشركة"), 2, 2);
                 header.Controls.Add(_company, 3, 2);
             }
@@ -146,7 +261,14 @@ namespace Dawaii.App.Forms
             var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 62, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10) };
             bar.Controls.Add(Theme.ActionButton(
                 correcting ? "حفظ التعديلات" : "حفظ ومتابعة للدفع", Save, primary: true, width: 200));
-            bar.Controls.Add(Theme.ActionButton("إلغاء", Close, width: 130));
+
+            // Setting a delivery aside is a deliberate act with its own button, as well as what
+            // happens if the screen is simply closed. A customer at the counter will not wait while
+            // the pharmacist hunts for the right way out.
+            if (!correcting)
+                bar.Controls.Add(Theme.ActionButton("حفظ كمسودة وإغلاق", SetAsideAndClose, width: 180));
+
+            bar.Controls.Add(Theme.ActionButton("إلغاء", Cancel, width: 130));
 
             Controls.Add(_grid);
             Controls.Add(_total);
@@ -302,11 +424,113 @@ namespace Dawaii.App.Forms
                     Msg.Info("تم حفظ التعديلات.");
                 }
 
+                // On the books now, so the draft it came from is no longer waiting for anyone.
+                _committed = true;
+                if (_draftNumber > 0) PurchaseDrafts.Remove(_draftNumber);
+
                 DialogResult = DialogResult.OK;
                 Close();
             }
             catch (DomainException ex) { Msg.Error(ex.Message); }
             catch (Exception ex) { Msg.Error("تعذّر حفظ الفاتورة: " + ex.Message); }
+        }
+
+        // ---------------- drafts ----------------
+
+        /// <summary>Pours a set-aside delivery back into the screen.</summary>
+        private void LoadDraft(PurchaseDrafts.Draft draft)
+        {
+            _draftNumber = draft.Number;
+            _representative.Text = draft.Representative ?? "";
+            _invoiceNumber.Text = draft.InvoiceNumber ?? "";
+            _date.Value = draft.InvoiceDate == default(DateTime) ? DateTime.Today : draft.InvoiceDate;
+
+            _lines.Clear();
+            _lines.AddRange(draft.Lines);
+            Text = "فاتورة مشتريات — مسودة " + draft.Number;
+            Reload();
+        }
+
+        /// <summary>Records the screen as it stands. Returns the draft, or null when there is nothing
+        /// worth keeping.</summary>
+        private PurchaseDrafts.Draft SetAside()
+        {
+            if (_editing != null || _lines.Count == 0) return null;
+
+            PurchaseDrafts.Draft draft = PurchaseDrafts.Save(
+                _draftNumber, _supplier, _representative.Text, _invoiceNumber.Text, _date.Value.Date, _lines);
+            _draftNumber = draft.Number;
+            return draft;
+        }
+
+        private void SetAsideAndClose()
+        {
+            PurchaseDrafts.Draft draft = SetAside();
+            if (draft == null) { Msg.Info("لا توجد أصناف لحفظها كمسودة."); return; }
+
+            _committed = true;          // already kept; closing must not ask again
+            Msg.Info("تم حفظ الفاتورة كمسودة " + draft.Number + ".\n" +
+                     "للعودة إليها: الموردون والمشتريات ← المسودات.");
+            DialogResult = DialogResult.Cancel;
+            Close();
+        }
+
+        /// <summary>
+        /// Settles what happens to typing that was never filed. Returns false to stay on the invoice.
+        ///
+        /// Both ways out of this screen — the إلغاء button and the window's X — come through here, so
+        /// they ask the same question and mean the same thing. Closing is the deliberate act now that
+        /// the window can be minimized: a pharmacist who only wants the invoice out of the way for a
+        /// minute has a button for exactly that, so being asked here is not in anyone's way.
+        /// </summary>
+        private bool ResolveUnsaved()
+        {
+            if (_committed || _editing != null || _lines.Count == 0) return true;
+
+            DialogResult answer = Msg.Ask(
+                "الفاتورة بها " + _lines.Count + " صنف لم يُحفظ.\n\n" +
+                "نعم = حفظ كمسودة والعودة إليها لاحقاً\n" +
+                "لا = إلغاء الفاتورة وحذف ما تمّ إدخاله\n\n" +
+                "(لإبقائها مفتوحة والعودة إليها بعد قليل استخدم زر التصغير.)",
+                "إغلاق الفاتورة");
+
+            if (answer == DialogResult.Cancel) return false;            // stay on the invoice
+
+            if (answer == DialogResult.Yes)
+            {
+                PurchaseDrafts.Draft draft = SetAside();
+                if (draft != null)
+                    Msg.Info("تم حفظ الفاتورة كمسودة " + draft.Number + ".\n" +
+                             "للعودة إليها: الموردون والمشتريات ← المسودات.");
+            }
+            else if (_draftNumber > 0)
+            {
+                PurchaseDrafts.Remove(_draftNumber);   // including the draft it was resumed from
+            }
+
+            _committed = true;
+            return true;
+        }
+
+        /// <summary>The "إلغاء" button: offers to keep the typing rather than assuming it is rubbish.</summary>
+        private void Cancel()
+        {
+            if (!ResolveUnsaved()) return;
+            DialogResult = DialogResult.Cancel;
+            Close();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            // Only a deliberate close asks. On the way out of the whole program there is nothing to
+            // offer — drafts live in memory and would not outlive it either — and a question nobody
+            // is there to answer would just hang the shutdown.
+            if (e.CloseReason == CloseReason.UserClosing && !ResolveUnsaved())
+            {
+                e.Cancel = true;
+                return;
+            }
+            base.OnFormClosing(e);
         }
 
         // ---------------- layout helpers ----------------

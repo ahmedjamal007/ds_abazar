@@ -192,7 +192,7 @@ namespace Dawaii.Tests
             int nothing = Drug("mystery", 50m, null);         // a cost but no price yet
             int handSet = Drug("brufen", 40m, 70m, manual: true);
 
-            var rows = _svc.Preview(_admin, new[] { panadol, nothing, handSet }, 1.3m);
+            var rows = _svc.Preview(_admin, new[] { panadol, nothing, handSet }, PriceOperation.Increase, 1.3m);
 
             Assert.That(rows.Select(r => r.Item.Id), Is.EqualTo(new[] { panadol, nothing, handSet }), "caller's order kept");
             Assert.That(rows[0].Status, Is.EqualTo(PricePlanStatus.Planned));
@@ -210,7 +210,7 @@ namespace Dawaii.Tests
             // B protin: on the shelf at 55,000 a box, no cost on file — irrelevant, the price is what counts.
             int bProtin = Drug("B protin", 0m, 55000m, strips: 1, units: 1);
 
-            var row = _svc.Preview(_admin, new[] { bProtin }, 1.25m).Single();
+            var row = _svc.Preview(_admin, new[] { bProtin }, PriceOperation.Increase, 1.25m).Single();
 
             Assert.That(row.Status, Is.EqualTo(PricePlanStatus.Planned));
             Assert.That(row.New.RawStripPrice, Is.EqualTo(68750m), "55,000 × 1.25");
@@ -223,7 +223,7 @@ namespace Dawaii.Tests
             _settings.Seed(PricingService.RoundingStepKey, "250");
             int bProtin = Drug("B protin", 0m, 55000m, strips: 1, units: 1);
 
-            var row = _svc.Preview(_admin, new[] { bProtin }, 1.25m).Single();
+            var row = _svc.Preview(_admin, new[] { bProtin }, PriceOperation.Increase, 1.25m).Single();
             Assert.That(row.New.BoxPrice, Is.EqualTo(68750m), "a 250 step leaves 68,750 as it is");
         }
 
@@ -233,7 +233,7 @@ namespace Dawaii.Tests
             // No cost, sells at 6,000 a box of 10 strips → the strip (600) is what gets multiplied.
             int item = Drug("syrup-strips", 0m, 60m, strips: 10, units: 10);
 
-            var row = _svc.Preview(_admin, new[] { item }, 1.3m).Single();
+            var row = _svc.Preview(_admin, new[] { item }, PriceOperation.Increase, 1.3m).Single();
             Assert.That(row.New.StripPrice, Is.EqualTo(780m), "600 × 1.3");
             Assert.That(row.New.BoxPrice, Is.EqualTo(7800m), "box = strip × 10, as always");
         }
@@ -245,7 +245,7 @@ namespace Dawaii.Tests
             // 0.9 on a shelf price is a discount the pharmacist chose.
             int bProtin = Drug("B protin", 0m, 55000m, strips: 1, units: 1);
 
-            var row = _svc.Preview(_admin, new[] { bProtin }, 0.9m).Single();
+            var row = _svc.Preview(_admin, new[] { bProtin }, PriceOperation.Decrease, 0.9m).Single();
             Assert.That(row.New.BoxPrice, Is.EqualTo(49500m));
         }
 
@@ -255,7 +255,7 @@ namespace Dawaii.Tests
             // Both on file: the SELLING price is what gets raised. A first cut multiplied the cost,
             // which would have taken a 9,000 drug DOWN to 6,500 — the owner corrected it.
             int panadol = Drug("panadol", 50m, 90m);      // sells at 9,000, costs 5,000
-            var row = _svc.Preview(_admin, new[] { panadol }, 1.3m).Single();
+            var row = _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, 1.3m).Single();
             Assert.That(row.New.BoxPrice, Is.EqualTo(11500m), "900 × 1.3 = 1,170 a strip → 1,150 → 11,500; not 5,000 × 1.3");
         }
 
@@ -263,19 +263,19 @@ namespace Dawaii.Tests
         public void Preview_FlagsAPriceThatLandsBelowCost_ButDoesNotRefuseIt()
         {
             int loss = Drug("loss", 80m, 60m);            // costs 8,000 a box, sells at 6,000, and ×0.9 → 5,400
-            var row = _svc.Preview(_admin, new[] { loss }, 0.9m).Single();
+            var row = _svc.Preview(_admin, new[] { loss }, PriceOperation.Decrease, 0.9m).Single();
             Assert.That(row.Status, Is.EqualTo(PricePlanStatus.Planned), "a discount is the pharmacist's call");
             Assert.That(row.BelowCost, Is.True, "but the screen has to say so");
 
             int fine = Drug("fine", 50m, 60m);
-            Assert.That(_svc.Preview(_admin, new[] { fine }, 1.3m).Single().BelowCost, Is.False);
+            Assert.That(_svc.Preview(_admin, new[] { fine }, PriceOperation.Increase, 1.3m).Single().BelowCost, Is.False);
         }
 
         [Test]
         public void Preview_WithNoCost_AHandSetPriceIsStillProtected()
         {
             int bProtin = Drug("B protin", 0m, 55000m, strips: 1, units: 1, manual: true);
-            Assert.That(_svc.Preview(_admin, new[] { bProtin }, 1.25m).Single().Status,
+            Assert.That(_svc.Preview(_admin, new[] { bProtin }, PriceOperation.Increase, 1.25m).Single().Status,
                 Is.EqualTo(PricePlanStatus.ManualSkipped));
         }
 
@@ -283,7 +283,7 @@ namespace Dawaii.Tests
         public void Apply_ANoCostItemsNewPrice_ReachesTheTill()
         {
             int bProtin = Drug("B protin", 0m, 55000m, strips: 1, units: 1);
-            var row = _svc.Preview(_admin, new[] { bProtin }, 1.25m).Single();
+            var row = _svc.Preview(_admin, new[] { bProtin }, PriceOperation.Increase, 1.25m).Single();
 
             _svc.Apply(_admin, new[] { new PriceChange { ItemId = bProtin, SellingPerUnit = row.New.UnitPrice } });
 
@@ -295,8 +295,8 @@ namespace Dawaii.Tests
         {
             int handSet = Drug("brufen", 40m, 70m, manual: true);
 
-            var protectedRows = _svc.Preview(_admin, new[] { handSet }, 1.3m, includeManual: false);
-            var recalculated = _svc.Preview(_admin, new[] { handSet }, 1.3m, includeManual: true);
+            var protectedRows = _svc.Preview(_admin, new[] { handSet }, PriceOperation.Increase, 1.3m, includeManual: false);
+            var recalculated = _svc.Preview(_admin, new[] { handSet }, PriceOperation.Increase, 1.3m, includeManual: true);
 
             Assert.That(protectedRows.Single().Status, Is.EqualTo(PricePlanStatus.ManualSkipped));
             Assert.That(recalculated.Single().Status, Is.EqualTo(PricePlanStatus.Planned));
@@ -306,8 +306,10 @@ namespace Dawaii.Tests
         [Test]
         public void Preview_SaysWhenTheItemIsAlreadyAtThatPrice()
         {
-            int panadol = Drug("panadol", 50m, 65m);          // 6,500 a box, and ×1.0 leaves it there
-            var rows = _svc.Preview(_admin, new[] { panadol }, 1.0m);
+            // 6,500 a box = 650 a strip; ×1.001 is 650.65, which rounds back to 650 at that magnitude.
+            // A multiplier of exactly 1.00 is refused before it gets here — see PriceOperationTests.
+            int panadol = Drug("panadol", 50m, 65m);
+            var rows = _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, 1.001m);
             Assert.That(rows.Single().Status, Is.EqualTo(PricePlanStatus.Unchanged));
         }
 
@@ -315,7 +317,7 @@ namespace Dawaii.Tests
         public void Preview_WritesNothing()
         {
             int panadol = Drug("panadol", 50m, 60m);
-            _svc.Preview(_admin, new[] { panadol }, 1.3m);
+            _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, 1.3m);
             Assert.That(_items.GetById(panadol).SellingPrice, Is.EqualTo(60m), "a preview is a preview");
         }
 
@@ -325,7 +327,7 @@ namespace Dawaii.Tests
             _settings.Seed(PricingService.RoundingStepKey, "1000");
             int panadol = Drug("panadol", 42.5m, 60m, strips: 1, units: 1);   // 60 × 1.3 = 78
 
-            var rows = _svc.Preview(_admin, new[] { panadol }, 1.3m);
+            var rows = _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, 1.3m);
             Assert.That(rows.Single().New.BoxPrice, Is.EqualTo(1000m), "the house step is one step at minimum, never zero");
         }
 
@@ -333,9 +335,9 @@ namespace Dawaii.Tests
         public void Preview_RefusesABadMultiplier()
         {
             int panadol = Drug("panadol", 50m, 60m);
-            Assert.Throws<ValidationException>(() => _svc.Preview(_admin, new[] { panadol }, 0m));
-            Assert.Throws<ValidationException>(() => _svc.Preview(_admin, new[] { panadol }, -2m));
-            Assert.Throws<ValidationException>(() => _svc.Preview(_admin, new[] { panadol }, 500m));
+            Assert.Throws<ValidationException>(() => _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, 0m));
+            Assert.Throws<ValidationException>(() => _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, -2m));
+            Assert.Throws<ValidationException>(() => _svc.Preview(_admin, new[] { panadol }, PriceOperation.Increase, 500m));
         }
 
         // ---------------- the service: who may ----------------
@@ -344,7 +346,7 @@ namespace Dawaii.Tests
         public void ACashier_MayNotPreviewOrApply()
         {
             int panadol = Drug("panadol", 50m, 60m);
-            Assert.Throws<PermissionDeniedException>(() => _svc.Preview(_cashier, new[] { panadol }, 1.3m));
+            Assert.Throws<PermissionDeniedException>(() => _svc.Preview(_cashier, new[] { panadol }, PriceOperation.Increase, 1.3m));
             Assert.Throws<PermissionDeniedException>(() => _svc.Apply(_cashier,
                 new[] { new PriceChange { ItemId = panadol, SellingPerUnit = 65m } }));
             Assert.That(_items.GetById(panadol).SellingPrice, Is.EqualTo(60m));
@@ -354,7 +356,7 @@ namespace Dawaii.Tests
         public void APrivilegedEmployee_May()
         {
             int panadol = Drug("panadol", 50m, 60m);
-            Assert.DoesNotThrow(() => _svc.Preview(_priv, new[] { panadol }, 1.3m));
+            Assert.DoesNotThrow(() => _svc.Preview(_priv, new[] { panadol }, PriceOperation.Increase, 1.3m));
             Assert.That(_svc.Apply(_priv, new[] { new PriceChange { ItemId = panadol, SellingPerUnit = 65m } }).Applied,
                 Is.EqualTo(1), "the same people who set prices by entering a delivery");
         }
@@ -396,8 +398,8 @@ namespace Dawaii.Tests
 
             _svc.Apply(_admin, new[]
             {
-                new PriceChange { ItemId = a, SellingPerUnit = 65m, Manual = false },
-                new PriceChange { ItemId = b, SellingPerUnit = 70m, Manual = true }
+                new PriceChange { ItemId = a, SellingPerUnit = 65m, Operation = PriceOperation.Increase },
+                new PriceChange { ItemId = b, SellingPerUnit = 70m, Operation = PriceOperation.Manual }
             });
 
             Assert.That(_items.GetById(a).ManualPrice, Is.False);
@@ -425,8 +427,12 @@ namespace Dawaii.Tests
         public void Apply_IsAudited()
         {
             int panadol = Drug("panadol", 50m, 60m);
-            _svc.Apply(_admin, new[] { new PriceChange { ItemId = panadol, SellingPerUnit = 65m } });
-            Assert.That(_audit.Entries.Any(e => e.Action == "MultiplierPrice" && e.EntityId == panadol));
+            _svc.Apply(_admin, new[] { new PriceChange
+            {
+                ItemId = panadol, SellingPerUnit = 65m, Operation = PriceOperation.Increase, Multiplier = 1.3m
+            }});
+            Assert.That(_audit.Entries.Any(e => e.Action == "PriceIncrease" && e.EntityId == panadol),
+                "the audit names which operation moved the price");
         }
 
         // ---------------- a price typed by hand ----------------
@@ -435,7 +441,7 @@ namespace Dawaii.Tests
         public void FiguresForBoxPrice_DividesDown_WithoutRounding()
         {
             var item = new Item { StripsPerBox = 3, UnitsPerStrip = 10 };
-            PricePlanFigures f = _svc.FiguresForBoxPrice(item, 5000m);
+            PricePlanFigures f = _svc.PreviewManual(item, 5000m).New;
 
             Assert.That(f.BoxPrice, Is.EqualTo(5000m), "exactly what was typed");
             Assert.That(f.StripPrice, Is.EqualTo(1666.67m));
@@ -446,7 +452,7 @@ namespace Dawaii.Tests
         [Test]
         public void FiguresForBoxPrice_RefusesANegativePrice()
         {
-            Assert.Throws<ValidationException>(() => _svc.FiguresForBoxPrice(new Item(), -5m));
+            Assert.Throws<ValidationException>(() => _svc.PreviewManual(new Item(), -5m));
         }
 
         // ---------------- against the real database ----------------
@@ -474,7 +480,7 @@ namespace Dawaii.Tests
                 stock.AddBatch(new StockBatch { ItemId = panadol, QuantityUnits = 1000, StripsPerBox = 10, UnitsPerStrip = 10, BoxPurchasePrice = 5000m, BoxSellingPrice = 6000m, ExpiryDate = DateTime.Today.AddYears(1) });
 
                 // A hand-set price, then a sale: the receipt must carry the new price.
-                pricing.Apply(admin, new[] { new PriceChange { ItemId = panadol, SellingPerUnit = 70m, Manual = true } });
+                pricing.Apply(admin, new[] { new PriceChange { ItemId = panadol, SellingPerUnit = 70m, Operation = PriceOperation.Manual } });
                 Assert.That(items.GetById(panadol).ManualPrice, Is.True);
 
                 Sale sale = pos.Complete(admin, new List<CartLine> { new CartLine { ItemId = panadol, UnitType = UnitType.Strip, Quantity = 2 } },

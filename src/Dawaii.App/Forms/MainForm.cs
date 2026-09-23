@@ -322,6 +322,11 @@ namespace Dawaii.App.Forms
         private void Logout()
         {
             Modules.PosModule.ResetCarts();   // pending invoices are this cashier's, not the next one's
+            // A delivery window left open — possibly just minimized, and easy to forget — belongs to
+            // the person signing out. It goes before the drafts, so it cannot file one on its way.
+            PurchaseInvoiceForm.CloseOpen();
+            PurchaseDrafts.Clear();           // and so are half-typed deliveries
+            Modules.PricingModule.ResetPending();   // and prices calculated but never applied
             Session.SignOut();
             DialogResult = DialogResult.Retry; // Program shows the login screen again
             Close();

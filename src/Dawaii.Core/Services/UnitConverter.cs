@@ -29,6 +29,21 @@ namespace Dawaii.Core.Services
         public static decimal PriceOf(Item item, UnitType type)
             => (item.SellingPrice ?? 0m) * UnitsIn(item, type);
 
+        /// <summary>
+        /// Reference COST for one of the given unit type — the mirror of <see cref="PriceOf"/>.
+        ///
+        /// <see cref="Item.PurchasePrice"/> is stored per SINGLE UNIT (schema: "reference cost / single
+        /// unit"), written from the newest batch's <see cref="StockBatch.PurchasePrice"/>, which is
+        /// itself the entered BOX cost divided down. So a box's cost is that per-unit figure times the
+        /// units in a box — exactly how the selling price is rebuilt.
+        ///
+        /// It lives here rather than being spelled out wherever a screen needs it, because a below-cost
+        /// comparison is only meaningful if both sides agree about how big a box is. An item with
+        /// malformed packaging must give 0 on both sides, not 0 on one and a number on the other.
+        /// </summary>
+        public static decimal CostOf(Item item, UnitType type)
+            => item.PurchasePrice * UnitsIn(item, type);
+
         /// <summary>Line total for a quantity in a unit type, rounded to 2 decimals (SDG).</summary>
         public static decimal LineTotal(Item item, int quantity, UnitType type)
             => decimal.Round(PriceOf(item, type) * quantity, 2);

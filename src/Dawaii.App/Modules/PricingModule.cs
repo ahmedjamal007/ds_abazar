@@ -12,8 +12,14 @@ using Dawaii.Core.Services;
 namespace Dawaii.App.Modules
 {
     /// <summary>
-    /// Price increases (V2.3 "زيادة الأسعار"): a multiplier over the current selling price, practical
-    /// rounding, and prices typed by hand — all previewed on the grid, then applied in one confirmed step.
+    /// Price changes (V2.3 "تعديل الأسعار"): a multiplier over the current selling price — raising it
+    /// or lowering it — practical rounding, and prices typed by hand; all previewed on the grid, then
+    /// applied in one confirmed step.
+    ///
+    /// This screen collects input and shows results. Every rule behind it — who may reprice, which
+    /// multiplier suits which operation, whether a hand-set price is protected, how the figure rounds,
+    /// whether it falls below cost, whether the stored price moved since the preview — belongs to
+    /// <see cref="PricingService"/>, so another front end would behave identically.
     ///
     /// The screen keeps a set of PENDING changes rather than writing as it goes. That is what lets the
     /// user price one group at 1.3, another at 1.2, hand-correct a few, look at the whole result, and
@@ -28,12 +34,22 @@ namespace Dawaii.App.Modules
     public class PricingModule : ModuleControl
     {
         /// <summary>A change the user has built but not yet applied.</summary>
+        /// <summary>
+        /// One calculated-but-not-yet-saved price. Everything here came from a
+        /// <see cref="PricePlanRow"/> the service produced — the screen does not compute any of it.
+        /// </summary>
         private class Pending
         {
             public PricePlanFigures Figures;
+            public PriceOperation Operation;
             public decimal? Multiplier;      // null when typed by hand
-            public bool Manual;
             public bool BelowCost;           // lands under the cost on file — shown, not refused
+
+            /// <summary>The item's stored per-unit price when this was calculated, so applying can tell
+            /// whether another terminal moved it in the meantime.</summary>
+            public decimal? PricedAt;
+
+            public bool Manual => Operation == PriceOperation.Manual;
         }
 
         /// <summary>The grid's row model. Named (not anonymous) so cell formatting can read it back.</summary>
@@ -48,6 +64,7 @@ namespace Dawaii.App.Modules
             public string CurrentStrip { get; set; }
             public string NewBox { get; set; }
             public string NewStrip { get; set; }
+            public string Operation { get; set; }
             public string Multiplier { get; set; }
             public string Status { get; set; }
             public bool HasPending { get; set; }
@@ -62,22 +79,43 @@ namespace Dawaii.App.Modules
         private ComboBox _filter;
         private NumericUpDown _multiplier;
         private CheckBox _includeManual;
-        private Label _summary, _rounding;
+        private Label _summary, _rounding, _meaning;
         private PillButton _apply;
         private DataGridView _grid;
         private CheckBox _selectAll;
         private bool _updatingSelection;
 
         private List<Item> _rows = new List<Item>();
-        private readonly Dictionary<int, Pending> _pending = new Dictionary<int, Pending>();
+
+        /// <summary>
+        /// Prices calculated but not yet saved, and the items ticked to calculate them — both keyed by
+        /// item id, NOT by grid row. The grid is rebuilt on every search, filter and preview, and a row
+        /// object does not survive that; an id does. Selecting ten drugs and then previewing used to
+        /// clear every tick, because the rebuilt rows all defaulted to unticked.
+        ///
+        /// They are session state, not screen state (V2.3.2). Navigating away disposes this module, so
+        /// while these were instance fields a pharmacist who priced forty drugs and stepped over to the
+        /// till to serve someone came back to an empty screen — the same loss of context that drafts
+        /// fixed for deliveries. Cleared at logout by <see cref="ResetPending"/>, like the POS carts.
+        ///
+        /// Nothing here holds a live <see cref="Item"/>, so none of it goes stale while the user is
+        /// away; and each pending price remembers what the price was when it was calculated, so the
+        /// service still refuses to apply one that another terminal has moved in the meantime.
+        /// </summary>
+        private static readonly Dictionary<int, Pending> _pending = new Dictionary<int, Pending>();
+        private static readonly HashSet<int> _selected = new HashSet<int>();
+
+        /// <summary>Forgets every unapplied price — called at logout, so the next user starts clean.</summary>
+        public static void ResetPending() { _pending.Clear(); _selected.Clear(); }
 
         public PricingModule()
         {
-            var title = new Label { Text = "زيادة الأسعار", Font = Theme.Title(20f), ForeColor = Theme.Primary, Dock = DockStyle.Top, Height = 44 };
+            var title = new Label { Text = "تعديل الأسعار", Font = Theme.Title(20f), ForeColor = Theme.Primary, Dock = DockStyle.Top, Height = 44 };
 
             var hint = new Label
             {
-                Text = "حدّد الأصناف، أدخل معامل الزيادة (يُضرب في سعر البيع الحالي) واضغط \"احتساب\" للمعاينة. لا يُحفظ شيء قبل الضغط على \"تطبيق\".",
+                Text = "حدّد الأصناف، أدخل المعامل، ثم اضغط \"زيادة الأسعار\" أو \"تخفيض الأسعار\" للمعاينة. " +
+                       "المعامل يُضرب في سعر البيع الحالي — 1.30 = زيادة 30%، 0.90 = تخفيض 10%. لا يُحفظ شيء قبل \"تطبيق التغييرات\".",
                 Dock = DockStyle.Top, Height = 24, ForeColor = Theme.TextMuted, Font = Theme.Base(10.5f)
             };
 
@@ -88,7 +126,7 @@ namespace Dawaii.App.Modules
 
             // ---- the multiplier row
             var calc = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 54, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Padding = new Padding(0, 6, 0, 6) };
-            calc.Controls.Add(new Label { Text = "معامل الزيادة:", AutoSize = true, Margin = new Padding(6, 12, 4, 0), Font = Theme.Base(11.5f) });
+            calc.Controls.Add(new Label { Text = "المعامل:", AutoSize = true, Margin = new Padding(6, 12, 4, 0), Font = Theme.Base(11.5f) });
             _multiplier = new NumericUpDown
             {
                 Minimum = 0.01m, Maximum = 100m, DecimalPlaces = 2, Increment = 0.05m, Value = 1.30m,
@@ -96,7 +134,18 @@ namespace Dawaii.App.Modules
                 Margin = new Padding(4, 6, 4, 0)
             };
             calc.Controls.Add(_multiplier);
-            calc.Controls.Add(Theme.ActionButton("احتساب للمحدد", PreviewSelected, primary: true, width: 150));
+
+            // Two buttons, not one: the operation is a decision the user makes explicitly, so a
+            // mistyped 0.90 can never quietly cut prices under a button that says "increase".
+            calc.Controls.Add(Theme.ActionButton("زيادة الأسعار", () => RunOperation(PriceOperation.Increase), primary: true, width: 140));
+            calc.Controls.Add(Theme.ActionButton("تخفيض الأسعار", () => RunOperation(PriceOperation.Decrease), width: 140));
+
+            // What the number in the box actually means, updated as it is typed — "0.90" on its own
+            // tells a cashier nothing.
+            _meaning = new Label { AutoSize = true, Margin = new Padding(10, 14, 6, 0), Font = Theme.Base(10.5f, FontStyle.Bold) };
+            calc.Controls.Add(_meaning);
+            _multiplier.ValueChanged += (s, e) => ShowMultiplierMeaning();
+
             _includeManual = new CheckBox { Text = "تضمين الأسعار اليدوية", AutoSize = true, Margin = new Padding(12, 14, 6, 0), Font = Theme.Base(11f) };
             calc.Controls.Add(_includeManual);
             _rounding = new Label { AutoSize = true, Margin = new Padding(16, 14, 6, 0), Font = Theme.Base(10.5f), ForeColor = Theme.TextMuted };
@@ -130,6 +179,7 @@ namespace Dawaii.App.Modules
             Col("الشريط الآن", "CurrentStrip", 105);
             Col("العلبة الجديدة", "NewBox", 120);
             Col("الشريط الجديد", "NewStrip", 110);
+            Col("العملية", "Operation", 90);
             Col("المعامل", "Multiplier", 75);
             Col("الحالة", "Status", 200);
             _grid.CellFormatting += ColourRow;
@@ -144,7 +194,16 @@ namespace Dawaii.App.Modules
                 if (_grid.IsCurrentCellDirty && _grid.CurrentCell is DataGridViewCheckBoxCell)
                     _grid.CommitEdit(DataGridViewDataErrorContexts.Commit);
             };
-            _grid.CellValueChanged += (s, e) => { if (e.RowIndex >= 0 && e.ColumnIndex == 0) SetHeaderSelectionState(); };
+            _grid.CellValueChanged += (s, e) =>
+            {
+                if (_updatingSelection || e.RowIndex < 0 || e.ColumnIndex != 0) return;
+                if (_grid.Rows[e.RowIndex].DataBoundItem is PriceGridRow row)
+                {
+                    bool ticked = Convert.ToBoolean(_grid.Rows[e.RowIndex].Cells["Selected"].Value ?? false);
+                    if (ticked) _selected.Add(row.Id); else _selected.Remove(row.Id);
+                }
+                SetHeaderSelectionState();
+            };
             _grid.ColumnWidthChanged += (s, e) => PositionHeaderCheckBox();
             _grid.Resize += (s, e) => PositionHeaderCheckBox();
 
@@ -165,6 +224,7 @@ namespace Dawaii.App.Modules
         {
             decimal step = Session.Services.Pricing.RoundingStep;
             _rounding.Text = "التقريب: " + (step > 0m ? "لأقرب " + step.ToString("0.##") : "تلقائي حسب السعر");
+            ShowMultiplierMeaning();
             Reload();
             _search.Focus();
         }
@@ -177,13 +237,43 @@ namespace Dawaii.App.Modules
             {
                 _rows = Session.Services.Pricing.Search(Session.CurrentUser, _search.Text).ToList();
                 _rows = ApplyFilter(_rows);
-                _grid.DataSource = _rows.Select(ToRow).ToList();
+                // Selections follow the items, not the rows. An id that filtering has hidden is
+                // dropped — "select all" then filter then act must not reach rows off screen — but an
+                // id that is still visible keeps its tick through search, preview and refresh.
+                var visible = new HashSet<int>(_rows.Select(i => i.Id));
+                _selected.RemoveWhere(id => !visible.Contains(id));
+
+                _updatingSelection = true;
+                try { _grid.DataSource = _rows.Select(ToRow).ToList(); }
+                finally { _updatingSelection = false; }
+
                 SetHeaderSelectionState();
                 BeginInvoke((Action)PositionHeaderCheckBox);
                 RefreshSummary();
             }
             catch (DomainException ex) { Msg.Error(ex.Message); }
-            catch (Exception ex) { Msg.Error(ex.Message); }
+            catch (Exception ex) { Log.Error("Pricing reload", ex); Msg.Error("تعذّر تحميل قائمة الأصناف."); }
+        }
+
+        /// <summary>Says what the multiplier in the box would do, so "0.90" is never read as "90".</summary>
+        private void ShowMultiplierMeaning()
+        {
+            decimal m = _multiplier.Value;
+            if (m == 1m)
+            {
+                _meaning.Text = "1.00 — لا تغيير";
+                _meaning.ForeColor = Theme.TextMuted;
+            }
+            else if (m > 1m)
+            {
+                _meaning.Text = "↑ " + PriceOperations.Describe(PriceOperation.Increase, m);
+                _meaning.ForeColor = Theme.PrimaryDark;
+            }
+            else
+            {
+                _meaning.Text = "↓ " + PriceOperations.Describe(PriceOperation.Decrease, m);
+                _meaning.ForeColor = Color.FromArgb(160, 90, 0);
+            }
         }
 
         private List<Item> ApplyFilter(List<Item> items)
@@ -216,15 +306,16 @@ namespace Dawaii.App.Modules
 
             return new PriceGridRow
             {
-                Selected = false,
+                Selected = _selected.Contains(i.Id),
                 Id = i.Id,
                 Name = i.DisplayName,
                 Packaging = i.StripsPerBox + "×" + i.UnitsPerStrip,
-                CostBox = noCost ? "—" : Fmt.Money(i.PurchasePrice * i.UnitsPerBox),
+                CostBox = noCost ? "—" : Fmt.Money(UnitConverter.CostOf(i, UnitType.Box)),
                 CurrentBox = i.SellingPrice.HasValue ? Fmt.Money(UnitConverter.PriceOf(i, UnitType.Box)) : "—",
                 CurrentStrip = i.SellingPrice.HasValue ? Fmt.Money(UnitConverter.PriceOf(i, UnitType.Strip)) : "—",
                 NewBox = p != null ? Fmt.Money(p.Figures.BoxPrice) : "",
                 NewStrip = p != null ? Fmt.Money(p.Figures.StripPrice) : "",
+                Operation = p != null ? PriceOperations.LabelAr(p.Operation) : "",
                 Multiplier = p?.Multiplier?.ToString("0.00") ?? "",
                 Status = status,
                 HasPending = p != null,
@@ -244,7 +335,8 @@ namespace Dawaii.App.Modules
             if (row == null) return;
 
             string col = _grid.Columns[e.ColumnIndex].DataPropertyName;
-            bool isNewCol = col == "NewBox" || col == "NewStrip" || col == "Multiplier" || col == "Status";
+            bool isNewCol = col == "NewBox" || col == "NewStrip" || col == "Operation" ||
+                            col == "Multiplier" || col == "Status";
 
             if (row.NoPrice) e.CellStyle.ForeColor = Theme.TextMuted;
             if (row.HasPending && isNewCol)
@@ -272,11 +364,10 @@ namespace Dawaii.App.Modules
 
         // ---------------- building the plan ----------------
 
+        /// <summary>The ticked items that are currently on screen — the id set is the truth, and the
+        /// grid is filtered to what the user can see.</summary>
         private List<int> SelectedIds()
-            => _grid.Rows.Cast<DataGridViewRow>()
-                .Where(r => !r.IsNewRow && Convert.ToBoolean(r.Cells["Selected"].Value ?? false))
-                .Select(r => ((PriceGridRow)r.DataBoundItem).Id)
-                .ToList();
+            => _rows.Where(i => _selected.Contains(i.Id)).Select(i => i.Id).ToList();
 
         /// <summary>The row the user is on when nothing is ticked, so a single drug needs no checkbox.</summary>
         private List<int> SelectedOrCurrentIds()
@@ -286,35 +377,58 @@ namespace Dawaii.App.Modules
             return ids;
         }
 
-        private void PreviewSelected()
+        /// <summary>
+        /// Previews an increase or a decrease. One path for both: the operation is passed to the
+        /// service, which validates the multiplier against it and does the arithmetic — this screen
+        /// only reports what came back, so the two buttons can never drift apart.
+        /// </summary>
+        private void RunOperation(PriceOperation operation)
         {
             List<int> ids = SelectedOrCurrentIds();
             if (ids.Count == 0) { Msg.Info("حدّد صنفاً واحداً على الأقل."); return; }
 
-            try
-            {
-                var plan = Session.Services.Pricing.Preview(Session.CurrentUser, ids, _multiplier.Value, _includeManual.Checked);
+            try { Msg.Info(BuildPlan(operation, ids)); }
+            catch (DomainException ex) { Msg.Error(ex.Message); }
+            catch (Exception ex) { Log.Error("Pricing preview", ex); Msg.Error("تعذّر احتساب الأسعار."); }
+        }
 
-                int planned = 0, noPrice = 0, manualSkipped = 0, unchanged = 0, keptManual = 0, belowCost = 0;
+        /// <summary>
+        /// Does the work and returns what happened, showing nothing. Separate from
+        /// <see cref="RunOperation"/> so the calculation can be exercised without a message box in the
+        /// way, and so the whole report is assembled in one place.
+        /// </summary>
+        private string BuildPlan(PriceOperation operation, List<int> ids)
+        {
+            {
+                // Which items are already holding a hand-typed pending price. The SERVICE decides what
+                // that means; the screen only reports the state it is holding.
+                var pendingManual = new HashSet<int>(_pending.Where(kv => kv.Value.Manual).Select(kv => kv.Key));
+
+                IReadOnlyList<PricePlanRow> plan = Session.Services.Pricing.Preview(
+                    Session.CurrentUser, ids, operation, _multiplier.Value, _includeManual.Checked, pendingManual);
+
+                int planned = 0, noPrice = 0, manualSkipped = 0, unchanged = 0, belowCost = 0;
                 foreach (PricePlanRow r in plan)
                 {
                     switch (r.Status)
                     {
                         case PricePlanStatus.Planned:
-                            // A price the user typed on THIS visit is not overwritten by a multiplier
-                            // unless they said to include manual prices — the same rule as stored ones.
-                            if (_pending.TryGetValue(r.Item.Id, out Pending existing) && existing.Manual && !_includeManual.Checked)
+                            _pending[r.Item.Id] = new Pending
                             {
-                                keptManual++;
-                                break;
-                            }
-                            _pending[r.Item.Id] = new Pending { Figures = r.New, Multiplier = r.Multiplier, Manual = false, BelowCost = r.BelowCost };
+                                Figures = r.New,
+                                Operation = r.Operation,
+                                Multiplier = r.Multiplier,
+                                BelowCost = r.BelowCost,
+                                PricedAt = r.PricedAt
+                            };
                             planned++;
                             if (r.BelowCost) belowCost++;
                             break;
                         case PricePlanStatus.NoPrice: noPrice++; break;
                         case PricePlanStatus.ManualSkipped: manualSkipped++; break;
                         case PricePlanStatus.Unchanged:
+                            // The figure landed back on the current price; that is not a change, and a
+                            // stale pending row for it would be a lie.
                             _pending.Remove(r.Item.Id);
                             unchanged++;
                             break;
@@ -323,16 +437,18 @@ namespace Dawaii.App.Modules
 
                 Reload();
 
-                string report = "تم احتساب " + planned + " سعراً: سعر البيع الحالي × " + _multiplier.Value.ToString("0.00") + ".";
+                string verb = PriceOperations.LabelAr(operation);
+                string report = "تم احتساب " + planned + " سعراً — " +
+                                PriceOperations.Describe(operation, _multiplier.Value) +
+                                " (سعر البيع الحالي × " + _multiplier.Value.ToString("0.00") + ").";
                 if (belowCost > 0)
                     report += "\n⚠ " + belowCost + " صنف سيصبح سعره أقل من تكلفة الشراء — راجعه قبل التطبيق.";
-                if (unchanged > 0) report += "\n" + unchanged + " صنف عند هذا السعر بالفعل.";
-                if (manualSkipped + keptManual > 0)
-                    report += "\n" + (manualSkipped + keptManual) + " صنف بسعر يدوي تُرك كما هو (فعّل \"تضمين الأسعار اليدوية\" لإعادة احتسابه).";
-                if (noPrice > 0) report += "\n" + noPrice + " صنف بدون سعر بيع — لا يوجد ما يُزاد عليه.";
-                Msg.Info(report);
+                if (unchanged > 0) report += "\n" + unchanged + " صنف عند هذا السعر بالفعل (لم يُضَف تغيير).";
+                if (manualSkipped > 0)
+                    report += "\n" + manualSkipped + " صنف بسعر يدوي تُرك كما هو (فعّل \"تضمين الأسعار اليدوية\" لإعادة احتسابه).";
+                if (noPrice > 0) report += "\n" + noPrice + " صنف بدون سعر بيع — لا يوجد ما يُطبَّق عليه " + verb + ".";
+                return report;
             }
-            catch (DomainException ex) { Msg.Error(ex.Message); }
         }
 
         private void EditManually() => EditManually(null);
@@ -353,7 +469,15 @@ namespace Dawaii.App.Modules
             using (var dlg = new PriceEditForm(item, existing?.Figures))
             {
                 if (dlg.ShowDialog(FindForm()) != DialogResult.OK || dlg.Result == null) return;
-                _pending[item.Id] = new Pending { Figures = dlg.Result, Multiplier = null, Manual = true };
+                PricePlanRow row = dlg.Result;
+                _pending[item.Id] = new Pending
+                {
+                    Figures = row.New,
+                    Operation = PriceOperation.Manual,
+                    Multiplier = null,
+                    BelowCost = row.BelowCost,        // decided by the service, for manual as for calculated
+                    PricedAt = row.PricedAt
+                };
             }
             Reload();
         }
@@ -379,29 +503,17 @@ namespace Dawaii.App.Modules
         private void ApplyPending()
         {
             if (_pending.Count == 0) { Msg.Info("لا توجد تغييرات معلّقة."); return; }
-
-            int manual = _pending.Values.Count(p => p.Manual);
-            int calc = _pending.Count - manual;
-            string groups = string.Join("، ",
-                _pending.Values.Where(p => p.Multiplier.HasValue)
-                    .GroupBy(p => p.Multiplier.Value)
-                    .OrderBy(g => g.Key)
-                    .Select(g => g.Count() + " صنف × " + g.Key.ToString("0.00")));
-            int belowCostPending = _pending.Values.Count(p => p.BelowCost);
-
-            if (!Msg.Confirm(
-                    "سيتم تغيير أسعار " + _pending.Count + " صنف بشكل دائم:\n" +
-                    (calc > 0 ? "• محسوبة: " + groups + "\n" : "") +
-                    (manual > 0 ? "• يدوية: " + manual + "\n" : "") +
-                    (belowCostPending > 0 ? "⚠ " + belowCostPending + " منها أقل من التكلفة\n" : "") +
-                    "\nسيظهر السعر الجديد فوراً في نقطة البيع. متابعة؟"))
-                return;
+            if (!Msg.Confirm(ConfirmationText())) return;
 
             var changes = _pending.Select(kv => new PriceChange
             {
                 ItemId = kv.Key,
                 SellingPerUnit = kv.Value.Figures.UnitPrice,
-                Manual = kv.Value.Manual
+                Operation = kv.Value.Operation,
+                Multiplier = kv.Value.Multiplier,
+                // What the price was when this was calculated. The service refuses the write if another
+                // terminal has moved it since, rather than erasing their change.
+                ExpectedCurrentUnitPrice = kv.Value.PricedAt
             }).ToList();
 
             try
@@ -409,22 +521,64 @@ namespace Dawaii.App.Modules
                 PriceApplyResult result = Session.Services.Pricing.Apply(Session.CurrentUser, changes);
 
                 // Whatever was written is no longer pending; whatever failed stays on screen to retry.
+                HashSet<int> failed = result.FailedItemIds;
                 foreach (PriceChange c in changes)
-                    if (!result.Failures.Any(f => f.StartsWith("#" + c.ItemId + ":"))) _pending.Remove(c.ItemId);
+                    if (!failed.Contains(c.ItemId)) _pending.Remove(c.ItemId);
 
                 Reload();
 
                 if (result.Failures.Count == 0)
                     Msg.Info("تم تحديث " + result.Applied + " سعراً.");
                 else
-                    Msg.Warn("تم تحديث " + result.Applied + " سعراً. تعذّر " + result.Failures.Count + ":\n" +
-                             string.Join("\n", result.Failures.Take(8)));
+                    Msg.Warn("تم تحديث " + result.Applied + " سعراً. تعذّر " + result.Failures.Count + " — تبقى معلّقة:\n" +
+                             string.Join("\n", result.Failures.Take(8).Select(f => f.ToString())) +
+                             (result.Failures.Count > 8 ? "\n…" : ""));
             }
             catch (DomainException ex) { Msg.Error(ex.Message); }
+            catch (Exception ex) { Log.Error("Pricing apply", ex); Msg.Error("تعذّر حفظ الأسعار. لم يتم تغيير شيء."); }
+        }
+
+        /// <summary>
+        /// Spells out exactly what is about to happen: which operation, how many items at which
+        /// multiplier, how many were typed by hand, and how many would sell below cost. This is the
+        /// last point at which the user can stop, so it names the operation rather than showing a bare
+        /// number the reader has to interpret.
+        /// </summary>
+        private string ConfirmationText()
+        {
+            var sb = new System.Text.StringBuilder();
+            var byOperation = _pending.Values
+                .Where(p => p.Multiplier.HasValue)
+                .GroupBy(p => p.Operation)
+                .OrderBy(g => g.Key);
+
+            foreach (var op in byOperation)
+            {
+                sb.Append(op.Key == PriceOperation.Increase ? "زيادة الأسعار" : "تخفيض الأسعار").Append(":\n");
+                foreach (var byMultiplier in op.GroupBy(p => p.Multiplier.Value).OrderBy(g => g.Key))
+                    sb.Append("• ").Append(byMultiplier.Count()).Append(" صنف × ")
+                      .Append(byMultiplier.Key.ToString("0.00"))
+                      .Append("  (").Append(PriceOperations.Describe(op.Key, byMultiplier.Key)).Append(")\n");
+            }
+
+            int manual = _pending.Values.Count(p => p.Manual);
+            if (manual > 0) sb.Append("أسعار يدوية:\n• ").Append(manual).Append(" صنف\n");
+
+            int belowCost = _pending.Values.Count(p => p.BelowCost);
+            if (belowCost > 0) sb.Append("⚠ ").Append(belowCost).Append(" منها أقل من التكلفة\n");
+
+            sb.Append("\nالإجمالي: ").Append(_pending.Count).Append(" صنف بشكل دائم.\n");
+            sb.Append("سيظهر السعر الجديد فوراً في نقطة البيع. متابعة؟");
+            return sb.ToString();
         }
 
         // ---------------- select-all header checkbox (same pattern as الأصناف والمخزون) ----------------
 
+        /// <summary>
+        /// Ticks or unticks everything CURRENTLY VISIBLE, and records it by id. Items hidden by the
+        /// filter are deliberately untouched: "select all" while filtered to "أسعار يدوية" must not
+        /// quietly arm every drug in the pharmacy.
+        /// </summary>
         private void SetAllSelected(bool selected)
         {
             if (_grid.Rows.Count == 0) return;
@@ -432,7 +586,14 @@ namespace Dawaii.App.Modules
             try
             {
                 foreach (DataGridViewRow row in _grid.Rows)
-                    if (!row.IsNewRow) row.Cells["Selected"].Value = selected;
+                {
+                    if (row.IsNewRow) continue;
+                    row.Cells["Selected"].Value = selected;
+                    if (row.DataBoundItem is PriceGridRow r)
+                    {
+                        if (selected) _selected.Add(r.Id); else _selected.Remove(r.Id);
+                    }
+                }
                 _selectAll.Checked = selected;
             }
             finally { _updatingSelection = false; }

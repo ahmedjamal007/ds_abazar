@@ -28,8 +28,12 @@ namespace Dawaii.App.Forms
         private NumericUpDown _box;
         private Label _derived, _warning;
 
-        /// <summary>The prices the user settled on, or null if they cancelled.</summary>
-        public PricePlanFigures Result { get; private set; }
+        /// <summary>
+        /// The price the user settled on, as a domain plan row — null if they cancelled. A row, not
+        /// bare figures, so the caller gets <see cref="PricePlanRow.BelowCost"/> decided by the service
+        /// rather than working it out again from the item's packaging.
+        /// </summary>
+        public PricePlanRow Result { get; private set; }
 
         public PriceEditForm(Item item, PricePlanFigures suggested = null)
         {
@@ -48,7 +52,7 @@ namespace Dawaii.App.Forms
                 TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 14, 0)
             };
 
-            decimal costBox = item.PurchasePrice * item.UnitsPerBox;
+            decimal costBox = UnitConverter.CostOf(item, UnitType.Box);
             var facts = new Label
             {
                 Dock = DockStyle.Top, Height = 78, Font = Theme.Base(11f), ForeColor = Theme.TextMuted,
@@ -113,15 +117,18 @@ namespace Dawaii.App.Forms
         {
             try
             {
-                PricePlanFigures f = _pricing.FiguresForBoxPrice(_item, _box.Value);
+                // The service decides the figures AND whether they fall below cost; this screen only
+                // shows the answer. It used to repeat the cost arithmetic here, which is how a second
+                // interpretation of "box cost" gets into the app.
+                PricePlanRow row = _pricing.PreviewManual(_item, _box.Value);
+                PricePlanFigures f = row.New;
                 _derived.Text =
                     "الشريط: " + Fmt.Money(f.StripPrice) + "     الحبة: " + Fmt.Money(decimal.Round(f.UnitPrice, 2)) +
                     "\nالعلبة: " + Fmt.Money(f.BoxPrice);
 
-                decimal costBox = _item.PurchasePrice * _item.UnitsPerBox;
                 _warning.Text =
                     _item.PurchasePrice <= 0m ? "لا توجد تكلفة شراء مسجلة — لا يمكن التحقق من الربح." :
-                    f.BoxPrice < costBox ? "تنبيه: السعر أقل من التكلفة (" + Fmt.Money(costBox) + ")." :
+                    row.BelowCost ? "⚠ السعر أقل من التكلفة (" + Fmt.Money(row.CostPerBox) + ")." :
                     f.BoxPrice == 0m ? "سعر صفر يعني البيع مجاناً." : "";
             }
             catch (DomainException ex) { _warning.Text = ex.Message; }
@@ -141,17 +148,18 @@ namespace Dawaii.App.Forms
             _box.Select(0, 0);   // commit a figure still being typed
             try
             {
-                PricePlanFigures f = _pricing.FiguresForBoxPrice(_item, _box.Value);
-                decimal costBox = _item.PurchasePrice * _item.UnitsPerBox;
-                if (_item.PurchasePrice > 0m && f.BoxPrice < costBox &&
-                    !Msg.Confirm("السعر المدخل أقل من تكلفة الشراء. هل تريد اعتماده على أي حال؟"))
+                PricePlanRow row = _pricing.PreviewManual(_item, _box.Value);
+                if (row.BelowCost &&
+                    !Msg.Confirm("السعر المدخل أقل من تكلفة الشراء (" + Fmt.Money(row.CostPerBox) + ").\n" +
+                                 "هل تريد اعتماده على أي حال؟"))
                     return;
 
-                Result = f;
+                Result = row;
                 DialogResult = DialogResult.OK;
                 Close();
             }
             catch (DomainException ex) { Msg.Error(ex.Message); }
+            catch (Exception ex) { Log.Error("Manual price", ex); Msg.Error("تعذّر حفظ السعر."); }
         }
 
         private static void AddRow(TableLayoutPanel t, string label, Control editor)

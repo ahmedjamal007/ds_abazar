@@ -26,6 +26,7 @@ namespace Dawaii.App.Modules
         private CheckBox _onlyOwed;
         private DataGridView _grid;
         private Label _summary;
+        private PillButton _drafts;
         private List<Supplier> _rows = new List<Supplier>();
 
         public SuppliersModule()
@@ -37,6 +38,10 @@ namespace Dawaii.App.Modules
 
             var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 50, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
             toolbar.Controls.Add(Btn("شركة جديدة", AddSupplier));
+            // Deliveries set aside when a customer interrupted. The count is on the button so a
+            // forgotten invoice is visible from the doorway rather than only if you go looking.
+            _drafts = (PillButton)Theme.ActionButton("المسودات", OpenDrafts, width: 140);
+            toolbar.Controls.Add(_drafts);
             toolbar.Controls.Add(Btn("فواتير الشركة", OpenSupplier));
             toolbar.Controls.Add(Btn("فاتورة جديدة", NewInvoice));
             toolbar.Controls.Add(Btn("تعديل الاسم", RenameSupplier));
@@ -70,6 +75,32 @@ namespace Dawaii.App.Modules
 
         public override void OnActivated() => Reload();
 
+        /// <summary>
+        /// Opens the deliveries that were set aside. Nothing here has touched stock or money — a draft
+        /// is only typing — so this is simply a way back to where the pharmacist left off.
+        /// </summary>
+        private void OpenDrafts()
+        {
+            if (PurchaseDrafts.Count == 0)
+            {
+                Msg.Info("لا توجد مسودات محفوظة.\n\n" +
+                         "عند إغلاق فاتورة قيد الإدخال تُحفظ تلقائياً هنا حتى تعود إليها.");
+                return;
+            }
+
+            using (var f = new PurchaseDraftsForm()) f.ShowDialog(FindForm());
+            Reload();
+        }
+
+        private void RefreshDraftsButton()
+        {
+            if (_drafts == null) return;
+            int n = PurchaseDrafts.Count;
+            _drafts.Text = n == 0 ? "المسودات" : "المسودات (" + n + ")";
+            _drafts.Outline = n == 0;
+            _drafts.Invalidate();
+        }
+
         private void Reload()
         {
             try
@@ -89,6 +120,7 @@ namespace Dawaii.App.Modules
                 }).ToList();
 
                 _summary.Text = "إجمالي المستحق للموردين: " + Fmt.Money(Session.Services.Suppliers.TotalOutstanding());
+                RefreshDraftsButton();
             }
             catch (Exception ex) { Msg.Error(ex.Message); }
         }
@@ -151,8 +183,10 @@ namespace Dawaii.App.Modules
             Supplier s = Selected();
             if (s == null) { Msg.Info("اختر شركة."); return; }
 
-            using (var f = new PurchaseInvoiceForm(s)) f.ShowDialog(FindForm());
-            Reload();
+            // Modeless: the delivery can be minimized while the customer who just walked in is served.
+            // Reload runs when it closes, because there is no ShowDialog left to wait on — and only if
+            // this screen is still alive, since the user may well have navigated away from it by then.
+            PurchaseInvoiceForm.OpenAlongside(s, FindForm(), () => { if (!IsDisposed) Reload(); });
         }
 
         private static Button Btn(string text, Action onClick) => Theme.ActionButton(text, onClick);
