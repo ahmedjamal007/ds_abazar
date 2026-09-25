@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <LangVersion>7.3</LangVersion>
+    <LangVersion>latest</LangVersion>
     <RootNamespace>Dawaii.Core</RootNamespace>
     <AssemblyName>Dawaii.Core</AssemblyName>
     <Deterministic>true</Deterministic>

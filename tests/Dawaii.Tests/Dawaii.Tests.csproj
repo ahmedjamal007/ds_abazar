@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <LangVersion>7.3</LangVersion>
+    <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <!-- The POS multi-cart tests drive the real WinForms module. -->
     <UseWindowsForms>true</UseWindowsForms>
