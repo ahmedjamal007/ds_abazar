@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -162,11 +162,10 @@ namespace Dawaii.App.Forms
         /// Falls back to the committed value when the box is empty or mid-edit ("-", "1.").</summary>
         private static decimal Typed(NumericUpDown n)
         {
+            // One rule for reading a typed amount, in Dawaii.Core, tested under every culture. The two
+            // parses that used to be here read "1250.50" as 125050 on a dot-grouping machine.
             decimal v;
-            if (!decimal.TryParse(n.Text, NumberStyles.Any, CultureInfo.CurrentCulture, out v) &&
-                !decimal.TryParse(n.Text, NumberStyles.Any, CultureInfo.InvariantCulture, out v))
-                return n.Value;
-            return Clamp(v, n);
+            return MoneyInput.TryParse(n.Text, out v) ? Clamp(v, n) : n.Value;
         }
 
         /// <summary>Pushes what is on screen into every field's Value, so saving reads the typed number even

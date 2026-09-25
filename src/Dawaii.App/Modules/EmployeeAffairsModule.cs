@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -126,7 +126,7 @@ namespace Dawaii.App.Modules
             var current = Session.Services.Employees.GetProfile(row.User.Id);
             string s = Prompt.Show($"الراتب الشهري لـ {row.User.FullName ?? row.User.Username}", "تعيين راتب", current.MonthlySalary.ToString("0.##"));
             if (string.IsNullOrWhiteSpace(s)) return;
-            if (!decimal.TryParse(s.Trim(), out decimal salary) || salary < 0) { Msg.Warn("قيمة غير صالحة."); return; }
+            if (!MoneyInput.TryParse(s, out decimal salary) || salary < 0) { Msg.Warn("قيمة غير صالحة."); return; }
             TryRun(() => Session.Services.Employees.SetSalary(Session.CurrentUser, row.User.Id, salary));
         }
 
@@ -135,7 +135,7 @@ namespace Dawaii.App.Modules
             var row = Selected(); if (row == null) return;
             string s = Prompt.Show("مبلغ الخصم", "خصم");
             if (string.IsNullOrWhiteSpace(s)) return;
-            if (!decimal.TryParse(s.Trim(), out decimal amount)) { Msg.Warn("قيمة غير صالحة."); return; }
+            if (!MoneyInput.TryParse(s, out decimal amount)) { Msg.Warn("قيمة غير صالحة."); return; }
             string reason = Prompt.Show("سبب الخصم (إلزامي)", "خصم");
             if (string.IsNullOrWhiteSpace(reason)) return;
             TryRun(() => Session.Services.Employees.AddDeduction(Session.CurrentUser, row.User.Id, amount, reason));

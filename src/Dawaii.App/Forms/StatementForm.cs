@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 using Dawaii.App.Ui;
 using Dawaii.Core;
+using Dawaii.Core.Services;
 using Dawaii.Core.Models;
 
 namespace Dawaii.App.Forms
@@ -95,7 +96,7 @@ namespace Dawaii.App.Forms
         {
             string s = Prompt.Show("مبلغ الدفعة", "تسجيل دفعة");
             if (string.IsNullOrWhiteSpace(s)) return;
-            if (!decimal.TryParse(s.Trim(), out decimal amount)) { Msg.Warn("مبلغ غير صالح."); return; }
+            if (!MoneyInput.TryParse(s, out decimal amount)) { Msg.Warn("مبلغ غير صالح."); return; }
             try { Session.Services.Debts.RecordPayment(Session.CurrentUser, _customerId, amount); Reload(); }
             catch (DomainException ex) { Msg.Error(ex.Message); }
         }
@@ -104,7 +105,7 @@ namespace Dawaii.App.Forms
         {
             string s = Prompt.Show("مبلغ الدين", "إضافة دين");
             if (string.IsNullOrWhiteSpace(s)) return;
-            if (!decimal.TryParse(s.Trim(), out decimal amount)) { Msg.Warn("مبلغ غير صالح."); return; }
+            if (!MoneyInput.TryParse(s, out decimal amount)) { Msg.Warn("مبلغ غير صالح."); return; }
             string note = Prompt.Show("ملاحظة (اختياري)", "إضافة دين");
             try { Session.Services.Debts.RecordManualCharge(Session.CurrentUser, _customerId, amount, note); Reload(); }
             catch (DomainException ex) { Msg.Error(ex.Message); }
