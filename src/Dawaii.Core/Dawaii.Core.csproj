@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFrameworks>net48;net10.0</TargetFrameworks>
@@ -11,6 +11,16 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <NeutralLanguage>ar</NeutralLanguage>
   </PropertyGroup>
+
+  <!-- DPAPI, for the machine-scoped secrets in MachineSecret: the MySQL password and the Telegram
+       bot token. On .NET Framework it is a GAC assembly; on modern .NET it is a package. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <Reference Include="System.Security" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'net48'">
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Local single-file backend (default, zero setup). Bundles the native SQLite engine. -->
@@ -30,6 +40,8 @@
     <EmbeddedResource Include="..\..\db\schema.mysql.sql" Link="Sql\schema.mysql.sql" />
     <EmbeddedResource Include="..\..\db\seed.mysql.sql" Link="Sql\seed.mysql.sql" />
     <EmbeddedResource Include="..\..\db\seed.demo.mysql.sql" Link="Sql\seed.demo.mysql.sql" />
+    <!-- The Telegram bot's own tables, in a SEPARATE database from the pharmacy's (V2.6). -->
+    <EmbeddedResource Include="..\..\db\bot.schema.sql" Link="Sql\bot.schema.sql" />
   </ItemGroup>
 
 </Project>
