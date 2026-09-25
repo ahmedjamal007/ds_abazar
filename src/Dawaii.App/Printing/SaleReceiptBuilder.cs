@@ -30,20 +30,27 @@ namespace Dawaii.App.Printing
 
             var doc = new ReceiptDocument();
 
+            // A sale gets its number from the row the store wrote, so it is always 1 or more. Zero
+            // means this sale was never saved — the cart printed as a price quote (V2.4) — and such a
+            // slip must not be able to pass for proof of purchase. Reading it off the number rather
+            // than a flag means ANY unsaved sale that reaches a printer is labelled correctly, however
+            // it got there.
+            bool quote = sale.SaleNumber <= 0;
+
             var header = new BoxElement { Padding = 8 };
             header.Children.Add(new TextElement(
                 Or(info.PharmacyName, "دوائي"), Align.Center, bold: true, scale: 1.5));
-            header.Children.Add(new TextElement("إيصال بيع", Align.Center));
+            header.Children.Add(new TextElement(quote ? "عرض سعر" : "إيصال بيع", Align.Center));
             doc.Add(header);
             doc.Add(new SpaceElement { Height = 4 });
 
             // Number, date and time on one line — the three things a customer or a return desk needs
-            // to find this sale again.
+            // to find this sale again. A quote has no number to give them.
             doc.Add(new RowElement
             {
                 Cells = new[]
                 {
-                    "فاتورة " + sale.SaleNumber.ToString(En),
+                    quote ? "غير مباعة" : "فاتورة " + sale.SaleNumber.ToString(En),
                     sale.CreatedAt.ToString("yyyy-MM-dd", En),
                     sale.CreatedAt.ToString("HH:mm", En),
                 },
@@ -51,6 +58,10 @@ namespace Dawaii.App.Printing
                 Aligns = new[] { Align.Right, Align.Center, Align.Left },
                 Bold = true,
             });
+
+            if (quote)
+                doc.Add(new TextElement("هذه ليست فاتورة بيع — لم يتم الدفع ولم يُخصم المخزون.", Align.Center));
+
             doc.Add(new RuleElement());
 
             if (!string.IsNullOrEmpty(info.CashierName))

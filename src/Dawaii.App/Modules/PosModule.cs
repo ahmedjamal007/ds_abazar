@@ -1,9 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 using Dawaii.App.Forms;
+using Dawaii.App.Printing;
 using Dawaii.App.Ui;
 using Dawaii.Core;
 using Dawaii.Core.Models;
@@ -16,10 +17,6 @@ namespace Dawaii.App.Modules
     /// removes; every cart line also carries a ✕ button for removing it with the mouse.</summary>
     public class PosModule : ModuleControl
     {
-        private class Row { public Item Item; public UnitType Unit = UnitType.Box; public int Qty = 1;
-            public decimal UnitPrice => UnitConverter.PriceOf(Item, Unit);
-            public decimal Total => UnitConverter.LineTotal(Item, Qty, Unit); }
-
         // Box, strip or single tablet. V1.2 req 3 had dropped the single unit; V1.9 puts it back —
         // customers do buy loose tablets, and the price of one is just the box price divided down
         // (the whole engine — pricing, FEFO, receipts, returns — always kept working in single units).
@@ -29,7 +26,7 @@ namespace Dawaii.App.Modules
         //
         // A customer who is still deciding must not hold up the next one in the queue. So the POS
         // keeps several carts and shows ONE of them: everything the screen edits — lines, credit
-        // customer, discount, payment method, the expiry warning — is one CartState, and switching is
+        // customer, discount, payment method, the expiry warning — is one SaleCart, and switching is
         // nothing more than pointing the screen at a different one and redrawing the grid. No query
         // runs, no control is rebuilt, and no stock moves: stock is allocated only when an invoice is
         // completed, exactly as before, so two carts holding the same drug are as safe as one.
@@ -38,42 +35,26 @@ namespace Dawaii.App.Modules
         // the POS disposes the module; a pending invoice has to survive the cashier looking something
         // up on another screen. The store is cleared at logout.
 
-        /// <summary>Everything that belongs to one customer's invoice-in-progress.</summary>
-        private sealed class CartState
-        {
-            public int Number;                                    // the tab's number, stable for its life
-            public readonly List<Row> Lines = new List<Row>();
-            public Customer CreditCustomer;
-            public decimal Discount;
-            public int PaymentIndex;
-            public string Warn = "";
-
-            public decimal Subtotal => Lines.Sum(r => r.Total);
-        }
-
-        private static readonly List<CartState> Carts = new List<CartState>();
-        private static CartState _active;
+        /// <summary>
+        /// The invoices this counter has open. The carts and the rules about them — numbering, which
+        /// one is showing, where the screen lands when one closes — live in Dawaii.Core now (V2.4);
+        /// this screen only draws them.
+        ///
+        /// Static because navigating away from the POS disposes the module, and a pending invoice has
+        /// to survive the cashier looking something up on another screen. Cleared at logout.
+        /// </summary>
+        private static readonly CartBook Book = new CartBook();
 
         /// <summary>Forgets every pending invoice — called at logout, so the next cashier starts clean.</summary>
-        public static void ResetCarts() { Carts.Clear(); _active = null; }
-
-        private static CartState EnsureActive()
-        {
-            if (_active == null)
-            {
-                if (Carts.Count == 0) Carts.Add(new CartState { Number = 1 });
-                _active = Carts[0];
-            }
-            return _active;
-        }
+        public static void ResetCarts() => Book.Reset();
 
         // The rest of the module keeps reading and writing "the cart" and "the credit customer" as it
-        // always did; both now resolve to the active state, so no line of the selling logic changed.
-        private List<Row> _cart => EnsureActive().Lines;
+        // always did; both resolve to the active cart, so no line of the selling logic changed.
+        private List<CartRow> _cart => Book.Active.Lines;
         private Customer _creditCustomer
         {
-            get => EnsureActive().CreditCustomer;
-            set => EnsureActive().CreditCustomer = value;
+            get => Book.Active.CreditCustomer;
+            set => Book.Active.CreditCustomer = value;
         }
 
         private TextBox _search;
@@ -91,7 +72,6 @@ namespace Dawaii.App.Modules
         // and أوكاش went in backwards: the Arabic word became the stored code.
         private static readonly (string Label, string Value)[] PaymentOptions =
             PaymentMethods.All.Select(m => (m.LabelAr, m.Code)).ToArray();
-        private Sale _lastSale;
         private readonly Timer _searchDebounce = new Timer { Interval = 250 };
 
         public PosModule()
@@ -171,13 +151,13 @@ namespace Dawaii.App.Modules
             var discRow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, FlowDirection = FlowDirection.RightToLeft };
             discRow.Controls.Add(new Label { Text = "خصم:", AutoSize = true, Margin = new Padding(6, 8, 4, 0), Font = Theme.Base(11f) });
             _discount = new NumericUpDown { Width = 110, Minimum = 0, Maximum = 100000000, DecimalPlaces = 2, Font = Theme.Base(12f) };
-            _discount.ValueChanged += (s, e) => { if (!_loadingCart) EnsureActive().Discount = _discount.Value; UpdateTotals(); };
+            _discount.ValueChanged += (s, e) => { if (!_loadingCart) Book.Active.Discount = _discount.Value; UpdateTotals(); };
             discRow.Controls.Add(_discount);
             discRow.Controls.Add(new Label { Text = "طريقة الدفع:", AutoSize = true, Margin = new Padding(14, 8, 4, 0), Font = Theme.Base(11f) });
             _payment = new ComboBox { Width = 120, DropDownStyle = ComboBoxStyle.DropDownList, Font = Theme.Base(12f) };
             foreach (var p in PaymentOptions) _payment.Items.Add(p.Label);
             _payment.SelectedIndex = 0;   // كاش
-            _payment.SelectedIndexChanged += (s, e) => { if (!_loadingCart) EnsureActive().PaymentIndex = Math.Max(0, _payment.SelectedIndex); };
+            _payment.SelectedIndexChanged += (s, e) => { if (!_loadingCart) Book.Active.PaymentIndex = Math.Max(0, _payment.SelectedIndex); };
             discRow.Controls.Add(_payment);
 
             _total = new Label { Dock = DockStyle.Top, Height = 40, ForeColor = Theme.Primary, Font = Theme.Title(20f), TextAlign = ContentAlignment.MiddleRight, Padding = new Padding(0, 0, 10, 0) };
@@ -186,7 +166,7 @@ namespace Dawaii.App.Modules
             buttons.Controls.Add(Btn("نقدي (F9)", () => CompleteSale(SaleType.Cash), primary: true));
             buttons.Controls.Add(Btn("آجل (F10)", () => CompleteSale(SaleType.Credit)));
             buttons.Controls.Add(Btn("مسح", ClearCart));
-            buttons.Controls.Add(Btn("طباعة آخر", ReprintLast));
+            buttons.Controls.Add(Btn("طباعة السلة", PrintCart));
 
             // The tab strip: one numbered button per pending invoice, the active one filled, and [+].
             // It sits between the discount/payment row and the action buttons — the cashier's hand is
@@ -221,10 +201,10 @@ namespace Dawaii.App.Modules
 
         // ---------- carts ----------
 
-        /// <summary>Copies what the controls hold into the active state, before pointing them elsewhere.</summary>
+        /// <summary>Copies what the controls hold into the active cart, before pointing them elsewhere.</summary>
         private void SaveUiIntoActive()
         {
-            CartState c = EnsureActive();
+            SaleCart c = Book.Active;
             c.Discount = _discount.Value;
             c.PaymentIndex = Math.Max(0, _payment.SelectedIndex);
             c.Warn = _warn.Text ?? "";
@@ -233,7 +213,7 @@ namespace Dawaii.App.Modules
         /// <summary>Points the controls at the active state. The grid is redrawn by the caller.</summary>
         private void LoadActiveIntoUi()
         {
-            CartState c = EnsureActive();
+            SaleCart c = Book.Active;
             _loadingCart = true;
             try
             {
@@ -244,44 +224,36 @@ namespace Dawaii.App.Modules
             finally { _loadingCart = false; }
         }
 
-        /// <summary>Opens a new empty invoice and switches to it. Numbers are the lowest free one, so
-        /// after [1][2][3] → complete 2 → [1][3], the next customer is [2] again, not [4].</summary>
-        private void NewCart()
-        {
-            int number = 1;
-            while (Carts.Any(c => c.Number == number)) number++;
+        private void NewCart() => ShowActive(Book.OpenNew());
 
-            var cart = new CartState { Number = number };
-            Carts.Add(cart);
-            SwitchTo(cart);
+        private void SwitchTo(SaleCart cart)
+        {
+            if (cart == null || ReferenceEquals(cart, Book.Active)) { ShowActive(Book.Active); return; }
+
+            // A half-typed quantity belongs to the cart it was typed on; commit it there first.
+            _cartGrid.EndEdit();
+            SaveUiIntoActive();
+            if (Book.SwitchTo(cart)) ShowActive(cart);
         }
 
-        private void SwitchTo(CartState cart)
+        /// <summary>Points the screen at whichever cart is now active.</summary>
+        private void ShowActive(SaleCart cart)
         {
-            if (cart == null || !Carts.Contains(cart)) return;
-            if (!ReferenceEquals(cart, _active))
-            {
-                // A half-typed quantity belongs to the cart it was typed on; commit it there first.
-                _cartGrid.EndEdit();
-                SaveUiIntoActive();
-                _active = cart;
-                LoadActiveIntoUi();
-            }
+            LoadActiveIntoUi();
             RenderCart();
             _search.Focus();
         }
 
         private void SwitchToNumber(int number)
-        {
-            CartState cart = Carts.FirstOrDefault(c => c.Number == number);
-            if (cart != null) SwitchTo(cart);
-        }
+            => SwitchTo(Book.All.FirstOrDefault(c => c.Number == number));
 
         private void SwitchToNext()
         {
-            if (Carts.Count < 2) return;
-            int i = Carts.IndexOf(EnsureActive());
-            SwitchTo(Carts[(i + 1) % Carts.Count]);
+            if (Book.Count < 2) return;
+            _cartGrid.EndEdit();
+            SaveUiIntoActive();
+            Book.SwitchToNext();
+            ShowActive(Book.Active);
         }
 
         /// <summary>
@@ -292,18 +264,7 @@ namespace Dawaii.App.Modules
         /// </summary>
         private void CloseActiveCart()
         {
-            CartState closing = EnsureActive();
-            int i = Carts.IndexOf(closing);
-            Carts.Remove(closing);
-
-            CartState next;
-            if (Carts.Count == 0) { next = new CartState { Number = 1 }; Carts.Add(next); }
-            else next = Carts[Math.Min(i, Carts.Count - 1)];
-
-            _active = next;
-            LoadActiveIntoUi();
-            RenderCart();
-            _search.Focus();
+            ShowActive(Book.CloseActive());
         }
 
         /// <summary>
@@ -315,17 +276,17 @@ namespace Dawaii.App.Modules
         /// updated in place; when a cart was opened or closed the strip is rebuilt — but deferred to
         /// after the current event, so a tab is never destroyed inside its own Click.
         /// </summary>
-        private readonly Dictionary<CartState, PillButton> _tabButtons = new Dictionary<CartState, PillButton>();
+        private readonly Dictionary<SaleCart, PillButton> _tabButtons = new Dictionary<SaleCart, PillButton>();
         private bool _tabRebuildQueued;
 
         private void RefreshTabs()
         {
             if (_tabs == null) return;
 
-            bool sameSet = _tabButtons.Count == Carts.Count && Carts.All(_tabButtons.ContainsKey);
+            bool sameSet = _tabButtons.Count == Book.Count && Book.All.All(_tabButtons.ContainsKey);
             if (sameSet)
             {
-                CartState active = EnsureActive();
+                SaleCart active = Book.Active;
                 foreach (var kv in _tabButtons) StyleTab(kv.Value, kv.Key, ReferenceEquals(kv.Key, active));
                 UpdatePendingLabel();
                 return;
@@ -349,10 +310,10 @@ namespace Dawaii.App.Modules
                 _tabs.Controls.Clear();
                 _tabButtons.Clear();
 
-                CartState active = EnsureActive();
-                foreach (CartState cart in Carts.OrderBy(c => c.Number))
+                SaleCart active = Book.Active;
+                foreach (SaleCart cart in Book.All.OrderBy(c => c.Number))
                 {
-                    CartState captured = cart;
+                    SaleCart captured = cart;
                     var b = new PillButton { Height = 32, CornerRadius = 8, Margin = new Padding(3, 0, 3, 0) };
                     StyleTab(b, cart, ReferenceEquals(cart, active));
                     b.Click += (s, e) => SwitchTo(captured);
@@ -369,7 +330,7 @@ namespace Dawaii.App.Modules
             finally { _tabs.ResumeLayout(); }
         }
 
-        private static void StyleTab(PillButton b, CartState cart, bool isActive)
+        private static void StyleTab(PillButton b, SaleCart cart, bool isActive)
         {
             int lines = cart.Lines.Count;
             string text = lines == 0 ? cart.Number.ToString() : cart.Number + "  (" + lines + ")";
@@ -387,7 +348,7 @@ namespace Dawaii.App.Modules
 
         private void UpdatePendingLabel()
         {
-            int pending = Carts.Count(c => c.Lines.Count > 0);
+            int pending = Book.All.Count(c => c.Lines.Count > 0);
             _pendingLabel.Text = pending == 0 ? "" : "معلّقة: " + pending;
         }
 
@@ -517,13 +478,13 @@ namespace Dawaii.App.Modules
 
         private void AddItem(Item item)
         {
-            Row row = _cart.FirstOrDefault(r => r.Item.Id == item.Id);
+            CartRow row = _cart.FirstOrDefault(r => r.Item.Id == item.Id);
             if (row != null) row.Qty += 1;
-            else { row = new Row { Item = item, Unit = UnitType.Box, Qty = 1 }; _cart.Add(row); }
+            else { row = new CartRow { Item = item, Unit = UnitType.Box, Qty = 1 }; _cart.Add(row); }
 
             DateTime? warn = Session.Services.Pos.NearExpiryWarning(item.Id);
             _warn.Text = warn.HasValue ? $"تنبيه: {item.NameEn} أقرب صلاحية {Fmt.Date(warn)}" : "";
-            EnsureActive().Warn = _warn.Text;
+            Book.Active.Warn = _warn.Text;
             ShowSubstituteInfo(item);
 
             RenderCart();
@@ -551,7 +512,7 @@ namespace Dawaii.App.Modules
         private void RenderCart()
         {
             _cartGrid.Rows.Clear();
-            foreach (Row r in _cart)
+            foreach (CartRow r in _cart)
             {
                 int i = _cartGrid.Rows.Add();
                 var cells = _cartGrid.Rows[i].Cells;
@@ -568,7 +529,7 @@ namespace Dawaii.App.Modules
         private void CartCellEndEdit(object sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0 || e.RowIndex >= _cart.Count) return;
-            Row r = _cart[e.RowIndex];
+            CartRow r = _cart[e.RowIndex];
             var cells = _cartGrid.Rows[e.RowIndex].Cells;
 
             if (_cartGrid.Columns[e.ColumnIndex].Name == "qty")
@@ -643,7 +604,7 @@ namespace Dawaii.App.Modules
             _cartGrid.EndEdit();
 
             _cart.RemoveAt(index);
-            if (_cart.Count == 0) { _warn.Text = ""; EnsureActive().Warn = ""; }
+            if (_cart.Count == 0) { _warn.Text = ""; Book.Active.Warn = ""; }
 
             RenderCart();                    // redraws the rows and recomputes the total
 
@@ -665,10 +626,7 @@ namespace Dawaii.App.Modules
 
         private void UpdateTotals()
         {
-            decimal subtotal = _cart.Sum(r => r.Total);
-            decimal discount = _discount.Value;
-            if (discount > subtotal) discount = subtotal;
-            _total.Text = "الإجمالي: " + Fmt.Money(subtotal - discount);
+            _total.Text = "الإجمالي: " + Fmt.Money(Book.Active.Total);
             _customerLabel.Text = _creditCustomer == null ? "" : "عميل الآجل: " + _creditCustomer.Name;
         }
 
@@ -681,13 +639,13 @@ namespace Dawaii.App.Modules
         {
             if (_cart.Count > 0 && !Msg.Confirm("إلغاء هذه الفاتورة وحذف أصنافها؟")) return;
 
-            if (Carts.Count > 1) { CloseActiveCart(); return; }
+            if (Book.Count > 1) { CloseActiveCart(); return; }
 
             _cart.Clear();
             _creditCustomer = null;
             _discount.Value = 0;
             _warn.Text = "";
-            EnsureActive().Warn = "";
+            Book.Active.Warn = "";
             RenderCart();
             _search.Focus();
         }
@@ -717,7 +675,6 @@ namespace Dawaii.App.Modules
             try
             {
                 Sale sale = Session.Services.Pos.Complete(Session.CurrentUser, lines, type, customerId, _discount.Value, AppConfig.TerminalName, paymentMethod);
-                _lastSale = sale;
                 // The invoice is saved: its tab goes, before printing or any dialog can pump a stray
                 // click back into a cart that no longer exists.
                 CloseActiveCart();
@@ -734,61 +691,54 @@ namespace Dawaii.App.Modules
             catch (Exception ex) { Msg.Error("تعذّر إتمام البيع: " + ex.Message); }
         }
 
-        private void PrintReceipt(Sale sale, bool ask)
+        /// <summary>
+        /// Puts a sale on paper. The work itself lives in <see cref="ReceiptOutput"/> so that the
+        /// reprint screen prints through exactly this code and not a copy of it (V2.4).
+        /// </summary>
+        private void PrintReceipt(Sale sale, bool ask) => ReceiptOutput.Print(FindForm(), sale, ask);
+
+        /// <summary>
+        /// Prints what is in the cart right now WITHOUT selling it (V2.4) — the customer who wants to
+        /// see the total on paper before deciding, or to take it away and think about it.
+        ///
+        /// Nothing is committed: no invoice row, no stock movement, no debt. The sale is built in
+        /// memory by <see cref="SaleBuilder"/>, which is side-effect free, and never handed to the
+        /// store. It therefore has no sale number, which is exactly how the receipt renderers know to
+        /// print it as عرض سعر rather than as a receipt someone could present as proof of purchase.
+        ///
+        /// It is still priced and allocated the way a real sale would be, so what it quotes is what
+        /// the customer would actually pay — including the discount typed on screen. A cart that
+        /// cannot be sold cannot be quoted either, and says why.
+        /// </summary>
+        private void PrintCart()
         {
+            if (_cart.Count == 0) { Msg.Info("لا توجد أصناف في الفاتورة."); return; }
+
             try
             {
-                var info = Session.Services.CreateReceiptInfo(Session.CurrentUser.FullName ?? Session.CurrentUser.Username);
-                // Role decides the format on the system's default printer (V1.3): the manager gets a full
-                // A4 invoice; the cashier/employee gets a narrow 80mm receipt. Reprint (ask) offers a picker.
-                if (Session.IsAdmin)
+                var lines = _cart.Select(r => new CartLine { ItemId = r.Item.Id, UnitType = r.Unit, Quantity = r.Qty }).ToList();
+                var header = new SaleHeader
                 {
-                    InvoicePrinter.Print(FindForm(), sale, info, showDialog: ask);
-                    return;
-                }
+                    UserId = Session.CurrentUser.Id,
+                    SaleType = SaleType.Cash,
+                    Discount = _discount.Value,
+                    Terminal = AppConfig.TerminalName
+                };
 
-                if (ask)
-                {
-                    // A reprint is never urgent, so it is checked on screen first and printed from
-                    // there, rather than finding out what came off the roll after the paper is spent.
-                    Dawaii.App.Printing.ThermalReceipt.ShowPreview(FindForm(), sale, info);
-                    return;
-                }
+                Sale quote = SaleBuilder.Build(
+                    lines,
+                    Session.Services.Items.GetById,
+                    id => Session.Services.Stock.GetSellableBatches(id),
+                    header);
+                quote.PaymentMethod = PaymentOptions[Math.Max(0, _payment.SelectedIndex)].Value;
 
-                // The counter receipt goes to the head as a rasterised image (V2.2). Only if that
-                // cannot be done — no printer, a PDF writer, a spooler that refuses — does it fall
-                // back to drawing a page through the driver, which is what used to lose the labels.
-                string reason;
-                string configured = Session.Services.ReceiptPrinterName;
-                if (Dawaii.App.Printing.ThermalReceipt.TryPrint(sale, info, configured, out reason)) return;
-
-                // A virtual printer returns false with no reason — that is the intended fallback. A real
-                // fault returns false WITH one, and used to be treated the same way: the receipt silently
-                // went to the driver path, and the cashier was never told the thermal head had refused.
-                // The fault is logged and the fallback is still attempted, so a receipt still comes out
-                // when it can — but the cashier now knows to look at the printer.
-                if (!string.IsNullOrEmpty(reason))
-                {
-                    Log.Error("Thermal receipt", new Exception(reason));
-                    Msg.Warn("تعذّرت الطباعة على طابعة الإيصالات:\n" + reason +
-                             "\n\nسيتم محاولة الطباعة عبر تعريف الطابعة. تحقق من الطابعة.");
-                }
-                ReceiptDocumentPrinter.Print(FindForm(), sale, info, showDialog: false);
+                // ask: true — a quote is never urgent, so it goes to the preview first rather than
+                // spending paper on something the customer may not go through with.
+                PrintReceipt(quote, ask: true);
             }
-            catch (Exception ex)
-            {
-                // The sale is already committed; a printer that is off or unplugged must not look like a
-                // failed sale. Say so, and say what to do.
-                Log.Error("Receipt print", ex);
-                Msg.Warn("تعذّرت الطباعة: " + ex.Message +
-                         "\n\nالفاتورة محفوظة. يمكن إعادة طباعتها من زر \"إعادة طباعة\" بعد فحص الطابعة.");
-            }
-        }
-
-        private void ReprintLast()
-        {
-            if (_lastSale == null) { Msg.Info("لا توجد فاتورة سابقة."); return; }
-            PrintReceipt(_lastSale, ask: true);
+            catch (InsufficientStockException ex) { Msg.Warn(ex.Message); }
+            catch (DomainException ex) { Msg.Error(ex.Message); }
+            catch (Exception ex) { Log.Error("Print cart quote", ex); Msg.Error("تعذّرت الطباعة: " + ex.Message); }
         }
 
         /// <summary>The cart's unit drop-down back to a <see cref="UnitType"/>. Anything unrecognised

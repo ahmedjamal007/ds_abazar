@@ -1,10 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using Dawaii.App.Modules;
 using Dawaii.App.Ui;
 using Dawaii.Core.Models;
+using Dawaii.Core.Services;
 
 namespace Dawaii.App.Forms
 {
@@ -165,6 +166,10 @@ namespace Dawaii.App.Forms
                 AddNavItem("زيادة الأسعار", "cash", () => new PricingModule());
                 AddNavItem("الأصناف والمخزون", "box", () => new ItemsModule());
             }
+
+            // Reprinting a receipt is everyone's (V2.4): it only reads, and the customer who lost
+            // their copy is standing at whichever counter is free. Listed just under the home screen.
+            AddNavItem("إعادة طباعة فاتورة", "receipt", () => new ReprintModule());
 
             AddNavItem("الرئيسية", "home", () => new HomeModule());
 

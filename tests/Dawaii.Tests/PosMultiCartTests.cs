@@ -10,6 +10,7 @@ using Dawaii.App;
 using Dawaii.App.Modules;
 using Dawaii.Core.Data;
 using Dawaii.Core.Models;
+using Dawaii.Core.Services;
 using NUnit.Framework;
 
 namespace Dawaii.Tests
@@ -88,40 +89,25 @@ namespace Dawaii.Tests
         }
 
         private T Field<T>(string name) => (T)typeof(PosModule).GetField(name, Any).GetValue(_pos);
-        private static object StaticField(string name) => typeof(PosModule).GetField(name, Any).GetValue(null);
+
+        /// <summary>
+        /// The carts themselves. They live in Dawaii.Core now (V2.4), so these read as ordinary typed
+        /// code rather than reflection over field names — only reaching the screen's static store
+        /// still needs it.
+        /// </summary>
+        private static CartBook Book => (CartBook)typeof(PosModule).GetField("Book", Any).GetValue(null);
 
         /// <summary>The active cart's lines, as (item id, qty), through the same property the POS reads.</summary>
         private List<(int itemId, int qty)> ActiveLines()
-        {
-            var cart = (IEnumerable)typeof(PosModule).GetProperty("_cart", Any).GetValue(_pos);
-            var lines = new List<(int, int)>();
-            foreach (object row in cart)
-            {
-                Type rt = row.GetType();
-                var item = (Item)rt.GetField("Item").GetValue(row);
-                int qty = (int)rt.GetField("Qty").GetValue(row);
-                lines.Add((item.Id, qty));
-            }
-            return lines;
-        }
+            => ((List<CartRow>)typeof(PosModule).GetProperty("_cart", Any).GetValue(_pos))
+               .Select(r => (r.Item.Id, r.Qty)).ToList();
 
         private Customer ActiveCustomer() => (Customer)typeof(PosModule).GetProperty("_creditCustomer", Any).GetValue(_pos);
         private void SetActiveCustomer(Customer c) => typeof(PosModule).GetProperty("_creditCustomer", Any).SetValue(_pos, c);
 
-        private int ActiveNumber()
-        {
-            object active = StaticField("_active");
-            return (int)active.GetType().GetField("Number").GetValue(active);
-        }
+        private int ActiveNumber() => Book.Active.Number;
 
-        private List<int> CartNumbers()
-        {
-            var carts = (IEnumerable)StaticField("Carts");
-            var numbers = new List<int>();
-            foreach (object c in carts) numbers.Add((int)c.GetType().GetField("Number").GetValue(c));
-            numbers.Sort();
-            return numbers;
-        }
+        private List<int> CartNumbers() => Book.All.Select(c => c.Number).OrderBy(n => n).ToList();
 
         private NumericUpDown Discount => Field<NumericUpDown>("_discount");
         private ComboBox Payment => Field<ComboBox>("_payment");

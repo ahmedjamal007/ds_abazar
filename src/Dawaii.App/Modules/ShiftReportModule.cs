@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -24,7 +24,6 @@ namespace Dawaii.App.Modules
         private PillButton _viewEmployees, _viewItems, _viewExpenses, _viewPurchases;
         private List<EmployeeExpenseRow> _expenses = new List<EmployeeExpenseRow>();
         private List<Dawaii.Core.Models.Purchase> _purchases = new List<Dawaii.Core.Models.Purchase>();
-        private decimal _purchasesTotal;
 
         private DailyReport _totals;
         private List<EmployeeDayRow> _employees = new List<EmployeeDayRow>();
@@ -32,10 +31,11 @@ namespace Dawaii.App.Modules
         private string _label = "";
         private DateTime _from, _to;
         private bool _showingEmployees = true;
-        private decimal _cashOnly, _bankak, _fawry, _ocash;
+        /// <summary>The shift added up. The arithmetic lives in Dawaii.Core so the screen and the
+        /// printed sheet cannot drift apart, which they had (V2.4).</summary>
+        private ShiftTill _till = new ShiftTill();
 
         /// <summary>Cash paid to medicine suppliers in the period — an outflow from the same drawer.</summary>
-        private decimal _supplierCash;
 
         public ShiftReportModule()
         {
@@ -131,47 +131,29 @@ namespace Dawaii.App.Modules
                 }).OrderBy(x => x.At).ToList();
 
                 _purchases = Session.Services.Purchases.InRange(from, to).ToList();
-                _purchasesTotal = _purchases.Sum(p => p.Amount);
+                // Cash handed to medicine suppliers comes out of this same drawer (V2.3), and the
+                // counter purchases do too. What each of those does to the expected cash is the
+                // reconciliation's business, not this screen's.
+                _till = ShiftReconciliation.Build(
+                    Session.Services.Pos.SalesInRange(from, to),
+                    _employees,
+                    purchases: _purchases.Sum(p => p.Amount),
+                    supplierCash: Session.Services.Suppliers.CashPaidToSuppliers(from, to));
 
-                // Split non-credit takings by payment channel (V1.3): only كاش lands in the drawer;
-                // بنكك/فوري go to the bank account, so they must not inflate the expected cash.
-                // Refunds come back out of the drawer, so each invoice counts for what it netted after
-                // any return — a partly returned sale still put its remaining cash in the till.
-                var nonCredit = Session.Services.Pos.SalesInRange(from, to)
-                    .Where(s => s.Status != Dawaii.Core.Models.SaleStatus.Returned && s.SaleType != Dawaii.Core.Models.SaleType.Credit)
-                    .ToList();
-                _cashOnly = nonCredit.Where(s => PaymentMethods.Normalize(s.PaymentMethod) == PaymentMethods.Cash).Sum(s => s.NetTotal);
-                _bankak = nonCredit.Where(s => PaymentMethods.Normalize(s.PaymentMethod) == PaymentMethods.Bankak).Sum(s => s.NetTotal);
-                _fawry = nonCredit.Where(s => PaymentMethods.Normalize(s.PaymentMethod) == PaymentMethods.Fawry).Sum(s => s.NetTotal);
-                _ocash = nonCredit.Where(s => PaymentMethods.Normalize(s.PaymentMethod) == PaymentMethods.Ocash).Sum(s => s.NetTotal);
-
-                decimal moneyExpenses = _employees.Sum(r => r.MoneyExpenses);
-                decimal allExpenses = _employees.Sum(r => r.TotalExpenses);
-
-                // Cash handed to medicine suppliers comes out of this same drawer (V2.3). It was the one
-                // outflow the reconciliation never knew about: the supplier ledger arrived in V2.1 with
-                // its own table, and this formula — written in V1.3 — was never told. Paying a
-                // distributor at the door therefore showed up as the cashier being short by that amount.
-                // Bank transfers are excluded because they never touch the till.
-                _supplierCash = Session.Services.Suppliers.CashPaidToSuppliers(from, to);
-
-                // Purchases are paid in cash out of the drawer, so they lower the expected cash too.
-                decimal expectedCash = _cashOnly - moneyExpenses - _purchasesTotal - _supplierCash;
 
                 _kSales.Value = Fmt.Money(_totals.TotalSales);
                 _kSales.Sub = _totals.ProfitVisible ? $"ربح {_totals.TotalProfit:0.00}" : "";
-                _kCash.Value = Fmt.Money(expectedCash);
-                _kCash.Sub = $"كاش {_cashOnly:0.00}";
-                _kInvoices.Value = _totals.TransactionCount.ToString();
+                _kCash.Value = Fmt.Money(_till.ExpectedCash);
+                                _kInvoices.Value = _totals.TransactionCount.ToString();
                 _kInvoices.Sub = _totals.ReturnedCount > 0 ? $"{_totals.ReturnedCount} مرتجع" : "";
-                _kExpenses.Value = Fmt.Money(allExpenses);
-                _kExpenses.Sub = $"نقدي {moneyExpenses:0.00}";
-                _kCash.Sub = $"كاش {_cashOnly:0.00}" +
-                             (_supplierCash > 0m ? $" − موردون {_supplierCash:0.00}" : "");
+                _kExpenses.Value = Fmt.Money(_till.AllExpenses);
+                _kExpenses.Sub = $"نقدي {_till.MoneyExpenses:0.00}";
+                _kCash.Sub = $"كاش {_till.Cash:0.00}" +
+                             (_till.SupplierCash > 0m ? $" − موردون {_till.SupplierCash:0.00}" : "");
 
-                _summary.Text = $"{_label}   |   كاش: {Fmt.Money(_cashOnly)}   |   بنكك: {Fmt.Money(_bankak)}   |   فوري: {Fmt.Money(_fawry)}   |   أوكاش: {Fmt.Money(_ocash)}" +
-                                $"   |   آجل: {Fmt.Money(_totals.CreditTotal)}   |   مشتريات: {Fmt.Money(_purchasesTotal)}" +
-                                $"   |   سداد موردين (نقداً): {Fmt.Money(_supplierCash)}" +
+                _summary.Text = $"{_label}   |   كاش: {Fmt.Money(_till.Cash)}   |   بنكك: {Fmt.Money(_till.Bankak)}   |   فوري: {Fmt.Money(_till.Fawry)}   |   أوكاش: {Fmt.Money(_till.Ocash)}" +
+                                $"   |   آجل: {Fmt.Money(_totals.CreditTotal)}   |   مشتريات: {Fmt.Money(_till.Purchases)}" +
+                                $"   |   سداد موردين (نقداً): {Fmt.Money(_till.SupplierCash)}" +
                                 $"   |   مرتجعات: {_totals.ReturnedCount} ({Fmt.Money(_totals.ReturnedTotal)})";
 
                 foreach (Control c in Controls) c.Invalidate();
@@ -254,22 +236,24 @@ namespace Dawaii.App.Modules
         private List<ReportSection> BuildSections()
         {
             bool daily = _period.SelectedIndex == 0;
-            decimal moneyExpenses = _employees.Sum(r => r.MoneyExpenses);
-            decimal allExpenses = _employees.Sum(r => r.TotalExpenses);
 
             var summaryRows = new List<string[]>
             {
                 new[] { "عدد الفواتير", _totals.TransactionCount.ToString() },
                 new[] { "إجمالي المبيعات", _totals.TotalSales.ToString("0.00") },
-                new[] { "كاش", _cashOnly.ToString("0.00") },
-                new[] { "بنكك", _bankak.ToString("0.00") },
-                new[] { "فوري", _fawry.ToString("0.00") },
+                new[] { "كاش", _till.Cash.ToString("0.00") },
+                new[] { "بنكك", _till.Bankak.ToString("0.00") },
+                new[] { "فوري", _till.Fawry.ToString("0.00") },
                 new[] { "مبيعات آجلة", _totals.CreditTotal.ToString("0.00") },
                 new[] { "مرتجعات", $"{_totals.ReturnedCount} ({_totals.ReturnedTotal:0.00})" },
-                new[] { "مصروفات الموظفين (نقدي)", moneyExpenses.ToString("0.00") },
-                new[] { "مصروفات الموظفين (إجمالي)", allExpenses.ToString("0.00") },
-                new[] { "المشتريات", _purchasesTotal.ToString("0.00") },
-                new[] { "النقد المتوقع في الدرج", (_cashOnly - moneyExpenses - _purchasesTotal).ToString("0.00") }
+                new[] { "مصروفات الموظفين (نقدي)", _till.MoneyExpenses.ToString("0.00") },
+                new[] { "مصروفات الموظفين (إجمالي)", _till.AllExpenses.ToString("0.00") },
+                new[] { "المشتريات", _till.Purchases.ToString("0.00") },
+                new[] { "أوكاش", _till.Ocash.ToString("0.00") },
+                new[] { "سداد موردين (نقداً)", _till.SupplierCash.ToString("0.00") },
+                // Was written out by hand here and left supplier cash out, so the paper and
+                // the screen disagreed by exactly what had been paid at the door (V2.4).
+                new[] { "النقد المتوقع في الدرج", _till.ExpectedCash.ToString("0.00") }
             };
             if (_totals.ProfitVisible)
                 summaryRows.Insert(2, new[] { "إجمالي الأرباح", _totals.TotalProfit.ToString("0.00") });

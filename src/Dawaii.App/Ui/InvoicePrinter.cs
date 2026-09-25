@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Printing;
 using System.Windows.Forms;
@@ -20,7 +20,8 @@ namespace Dawaii.App.Ui
         {
             using (var doc = new PrintDocument())
             {
-                doc.DocumentName = "فاتورة " + sale.SaleNumber;
+                // Zero means the sale was never saved — the cart printed as a quote (V2.4).
+                doc.DocumentName = sale.SaleNumber > 0 ? "فاتورة " + sale.SaleNumber : "عرض سعر";
                 doc.PrintPage += (s, e) => Render(e, sale, info);
 
                 if (showDialog)
@@ -56,11 +57,20 @@ namespace Dawaii.App.Ui
                 // Header
                 g.DrawString(info.PharmacyName ?? "دوائي", titleFont, Brushes.Black, new RectangleF(area.Left, y, area.Width, 34), rtlCenter);
                 y += 40;
-                g.DrawString("فاتورة بيع", h, Brushes.Black, new RectangleF(area.Left, y, area.Width, 22), rtlCenter);
+                bool quote = sale.SaleNumber <= 0;
+                g.DrawString(quote ? "عرض سعر" : "فاتورة بيع", h, Brushes.Black, new RectangleF(area.Left, y, area.Width, 22), rtlCenter);
                 y += 30;
 
-                g.DrawString($"رقم الفاتورة: {sale.SaleNumber}", f, Brushes.Black, new RectangleF(area.Left, y, area.Width, 20), rtl);
-                y += 22;
+                if (quote)
+                {
+                    g.DrawString("هذه ليست فاتورة بيع — لم يتم الدفع ولم يُخصم المخزون.", f, Brushes.Black, new RectangleF(area.Left, y, area.Width, 20), rtlCenter);
+                    y += 24;
+                }
+                else
+                {
+                    g.DrawString($"رقم الفاتورة: {sale.SaleNumber}", f, Brushes.Black, new RectangleF(area.Left, y, area.Width, 20), rtl);
+                    y += 22;
+                }
                 g.DrawString("التاريخ: " + Bidi.Ltr(sale.CreatedAt.ToString("yyyy-MM-dd HH:mm")), f, Brushes.Black, new RectangleF(area.Left, y, area.Width, 20), rtl);
                 y += 22;
                 if (!string.IsNullOrEmpty(info.CashierName))

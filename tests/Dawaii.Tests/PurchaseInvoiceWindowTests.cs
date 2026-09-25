@@ -8,6 +8,7 @@ using Dawaii.App;
 using Dawaii.App.Forms;
 using Dawaii.Core.Data;
 using Dawaii.Core.Models;
+using Dawaii.Core.Services;
 using NUnit.Framework;
 
 namespace Dawaii.Tests

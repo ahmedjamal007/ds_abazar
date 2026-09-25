@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Dawaii.Core.Models;
 
-namespace Dawaii.App.Forms
+namespace Dawaii.Core.Services
 {
     /// <summary>
     /// Deliveries half-typed and set aside (V2.3.2 "مسودات الفواتير").
