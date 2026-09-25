@@ -117,6 +117,12 @@ namespace Dawaii.App.Forms
             if (Session.IsAdmin)
             {
                 AddNavItem("الإعدادات والنسخ", "gear", () => new SettingsModule());
+                // The manager's Telegram bot (V2.6). A dialog rather than a module: it is set up once
+                // and then left alone, and it is the only window onto a service that has no interface.
+                AddDialogItem("إعداد تيليجرام", "gear", () =>
+                {
+                    using (var f = new TelegramSetupForm(Session.CurrentUser)) f.ShowDialog(this);
+                });
                 AddNavItem("قرب الانتهاء", "calendar", () => new ExpiryModule());
                 AddNavItem("المشتريات", "cart", () => new PurchasesModule());
                 AddDialogItem("تقرير المشتريات", "chart", () => new PurchaseReportForm().ShowDialog(this));

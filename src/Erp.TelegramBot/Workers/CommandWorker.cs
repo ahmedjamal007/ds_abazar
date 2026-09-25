@@ -1,3 +1,4 @@
+using Dawaii.Core.Bot;
 using Erp.TelegramBot.Commands;
 using Erp.TelegramBot.Configuration;
 using Erp.TelegramBot.Security;
@@ -12,18 +13,20 @@ namespace Erp.TelegramBot.Workers;
 /// The polling loop: ask Telegram for messages, decide whether the sender may be answered, answer.
 ///
 /// Long polling, never webhooks — the pharmacy has outbound internet and no public address, so
-/// nothing can reach in. This is also why the bot works behind whatever router the shop has without
-/// anybody configuring a port.
+/// nothing can reach in, and the bot works behind whatever router the shop has with no port to
+/// configure.
 ///
-/// The loop's contract with itself: it must never die and must never spin. A pharmacy runs this as a
-/// service for months without anyone looking at it, so every failure is caught, logged once, and
-/// waited out on a backoff curve.
+/// The loop's contract with itself: never die, never spin. A pharmacy runs this as a service for
+/// months without anyone looking at it, so every failure is caught, logged once, and waited out on a
+/// backoff curve.
 /// </summary>
 public sealed class CommandWorker : BackgroundService
 {
     private readonly ITelegramGateway _telegram;
     private readonly CommandAuthorizer _authorizer;
+    private readonly LinkThrottle _linkThrottle;
     private readonly CommandRouter _router;
+    private readonly BotStore _bot;
     private readonly BotOptions _options;
     private readonly ILogger<CommandWorker> _log;
 
@@ -37,13 +40,17 @@ public sealed class CommandWorker : BackgroundService
     public CommandWorker(
         ITelegramGateway telegram,
         CommandAuthorizer authorizer,
+        LinkThrottle linkThrottle,
         CommandRouter router,
+        BotStore bot,
         IOptions<BotOptions> options,
         ILogger<CommandWorker> log)
     {
         _telegram = telegram;
         _authorizer = authorizer;
+        _linkThrottle = linkThrottle;
         _router = router;
+        _bot = bot;
         _options = options.Value;
         _log = log;
     }
@@ -70,9 +77,9 @@ public sealed class CommandWorker : BackgroundService
 
                 foreach (Incoming message in batch)
                 {
-                    // Advance the cursor whatever happens to this message. A message that throws must
-                    // not be re-delivered forever — that is how a bot gets stuck on one bad input and
-                    // stops answering anybody.
+                    // Advance the cursor whatever happens. A message that throws must not be
+                    // re-delivered forever — that is how a bot gets stuck on one bad input and stops
+                    // answering everybody.
                     _offset = Math.Max(_offset, message.UpdateId + 1);
 
                     try
@@ -98,8 +105,8 @@ public sealed class CommandWorker : BackgroundService
                 _consecutiveFailures++;
                 TimeSpan wait = RetryDelay.For(_consecutiveFailures, _jitter.NextDouble());
 
-                // Logged at warning, not error: a pharmacy's internet dropping for a minute is
-                // expected operation, and an error for every poll would bury the real faults.
+                // Warning, not error: a pharmacy's internet dropping for a minute is expected
+                // operation, and an error per poll would bury the real faults.
                 _log.LogWarning(ex,
                     "Telegram poll failed ({Failures} in a row). Retrying in {Seconds:0.#}s.",
                     _consecutiveFailures, wait.TotalSeconds);
@@ -117,31 +124,83 @@ public sealed class CommandWorker : BackgroundService
         CommandLine command = CommandLine.Parse(message.Text, _botUsername);
         if (!command.IsCommand) return;     // a sticker, or someone chatting
 
-        Access access = _authorizer.Check(message.TelegramUserId, DateTimeOffset.Now);
+        var sender = new Sender(message.TelegramUserId, message.ChatId);
+        DateTimeOffset now = DateTimeOffset.Now;
+
+        // ---- linking: the ONE thing a sender the bot does not know may do ----
+        //
+        // It has to be, because it is how a manager becomes known. It is therefore also the only
+        // place a stranger can make the bot work, and the only place a six-digit code can be guessed
+        // at — hence a throttle of its own, global so that a flood cannot grow any per-sender state.
+        if (CommandRouter.IsOpenToStrangers(command.Verb) && !_authorizer.IsKnown(message.TelegramUserId))
+        {
+            if (!_linkThrottle.Allow(now))
+            {
+                _log.LogWarning("Link attempts throttled; ignoring one from {TelegramUserId}.",
+                    message.TelegramUserId);
+                Audit(message, command, success: false, note: "link throttled");
+                return;     // silence: a guesser learns nothing from being told to slow down
+            }
+
+            string? linkReply = _router.Handle(command, sender);
+            Audit(message, command, success: true, note: "link attempt");
+            if (linkReply != null) await _telegram.SendAsync(message.ChatId, linkReply, ct);
+            return;
+        }
+
+        Access access = _authorizer.Check(message.TelegramUserId, now);
 
         if (access == Access.Denied)
         {
             // Deliberately no reply. Any answer at all confirms to a stranger that the bot is real
-            // and listening. Phase 2 writes this to bot_audit_log; for now the service log is the
-            // only record, and it is the record that matters for noticing someone probing.
+            // and listening. The audit row is the ONLY record this happened — a run of these from one
+            // unknown id is what somebody trying the door looks like.
             _log.LogWarning(
                 "Ignored /{Verb} from unauthorized Telegram user {TelegramUserId} in chat {ChatId}.",
                 command.Verb, message.TelegramUserId, message.ChatId);
+            Audit(message, command, success: false, note: "not an authorized administrator");
             return;
         }
 
         if (access == Access.RateLimited)
         {
             _log.LogInformation("Rate-limited Telegram user {TelegramUserId}.", message.TelegramUserId);
+            Audit(message, command, success: false, note: "rate limited");
             await _telegram.SendAsync(message.ChatId,
                 "أوامر كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.", ct);
             return;
         }
 
-        string? reply = _router.Handle(command);
-        if (reply is null) return;
+        string? reply = _router.Handle(command, sender);
+        Audit(message, command, success: true, note: null);
+        TouchSeen(message.TelegramUserId);
+
+        if (reply == null) return;
 
         _log.LogInformation("/{Verb} from {TelegramUserId}.", command.Verb, message.TelegramUserId);
         await _telegram.SendAsync(message.ChatId, reply, ct);
+    }
+
+    /// <summary>
+    /// Writes the audit row. Never allowed to break the reply: a bot that stops answering because its
+    /// own log is unwritable is worse than one with a gap in the log, and the service log still has it.
+    /// </summary>
+    private void Audit(Incoming message, CommandLine command, bool success, string? note)
+    {
+        try
+        {
+            _bot.Audit(message.TelegramUserId, command.IsCommand ? command.Verb : null,
+                message.Text, success, note, DateTime.Now);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Could not write the bot audit log.");
+        }
+    }
+
+    private void TouchSeen(long telegramUserId)
+    {
+        try { _bot.TouchSeen(telegramUserId, DateTime.Now); }
+        catch (Exception ex) { _log.LogWarning(ex, "Could not record last-seen."); }
     }
 }

@@ -22,7 +22,11 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
   </ItemGroup>
 
-  <!-- No reference to Dawaii.Core yet: phase 1 touches no ERP data at all, and a dependency added
-       before it is needed is one nobody remembers is unused. It arrives in phase 2 with /link. -->
+  <ItemGroup>
+    <!-- Arrives in phase 2 with /link: the bot's own tables, and the live role re-check against the
+         pharmacy's users table. Dawaii.Core multi-targets net48 and net10.0, so this net10.0 worker
+         and the WinForms app share one implementation of both. -->
+    <ProjectReference Include="..\Dawaii.Core\Dawaii.Core.csproj" />
+  </ItemGroup>
 
 </Project>

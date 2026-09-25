@@ -34,6 +34,29 @@ public sealed class BotOptions
     /// <summary>Commands per minute per administrator, after which they are told to slow down.</summary>
     public int RateLimitPerMinute { get; set; } = 20;
 
+    /// <summary>
+    /// Link attempts per minute across EVERYBODY. Global on purpose: /link is the one command an
+    /// unknown sender may use, and a per-sender limit would have the bot remember every Telegram id
+    /// that ever messaged it — a rate limiter that is itself the denial of service.
+    /// </summary>
+    public int LinkAttemptsPerMinute { get; set; } = 10;
+
+    /// <summary>
+    /// The folder holding the pharmacy's dawaii.ini — normally its install directory, e.g.
+    /// C:\Program Files\Dawaii. The bot runs from its own folder, so it has to be told.
+    ///
+    /// Empty means "assume a default local install", which is right for the common case and wrong in
+    /// network mode. The service logs which it used at startup, because a bot silently reading the
+    /// wrong database would report cheerfully empty stock.
+    /// </summary>
+    public string ErpDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The bot's own SQLite file. Empty uses BotStore.DefaultPath, beside the pharmacy's database
+    /// under %ProgramData% so the desktop app and this service reach the same file.
+    /// </summary>
+    public string BotDatabasePath { get; set; } = string.Empty;
+
     public TimeSpan PollTimeout =>
         TimeSpan.FromSeconds(PollTimeoutSeconds is > 0 and <= 50 ? PollTimeoutSeconds : 30);
 }

@@ -43,6 +43,15 @@ public sealed class CommandAuthorizer
     }
 
     /// <summary>
+    /// Whether this sender is a known administrator, WITHOUT spending any of their allowance.
+    ///
+    /// Asked before /link, to tell "a manager linking for the first time" from "a manager who is
+    /// already linked and typed /link again". Checking with <see cref="Check"/> would charge them a
+    /// command for a question the bot asked itself.
+    /// </summary>
+    public bool IsKnown(long telegramUserId) => _admins.IsAdmin(telegramUserId);
+
+    /// <summary>
     /// Decides, and counts the command against the sender's allowance when it is allowed.
     ///
     /// A rejected command is NOT counted: someone who trips the limit would otherwise keep it tripped

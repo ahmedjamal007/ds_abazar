@@ -1,3 +1,6 @@
+using Dawaii.Core.Abstractions;
+using Dawaii.Core.Bot;
+using Dawaii.Core.Data;
 using Erp.TelegramBot.Commands;
 using Erp.TelegramBot.Configuration;
 using Erp.TelegramBot.Security;
@@ -13,87 +16,151 @@ using Telegram.Bot;
 namespace Erp.TelegramBot;
 
 /// <summary>
-/// Dawaii's Telegram bot for the pharmacy manager (phase 1).
+/// Dawaii's Telegram bot for the pharmacy manager.
 ///
 /// One executable that runs either as a console app — for setting it up and watching it work — or as
 /// a Windows Service, which is how it runs in a pharmacy: headless, starting with the machine,
-/// nobody logged in. It is deliberately NOT part of the desktop application: the till gets closed
-/// at the end of a shift and the manager still wants alerts.
+/// nobody logged in. Deliberately NOT part of the desktop application: the till gets closed at the
+/// end of a shift and the manager still wants to be able to ask about stock.
 ///
-/// Phase 1 touches no pharmacy data whatsoever. It proves the whole path works — token, connection,
-/// long polling, authorization, a reply — before anything is allowed near the database.
+/// It opens TWO databases, and the asymmetry is the whole design:
+///   * the pharmacy's, READ-ONLY, only ever to check who is asking and (later) to answer questions;
+///   * its own, for links, the token and the audit log.
+/// A 24/7 background service that wrote to the pharmacy's file could lock or corrupt the one thing
+/// the shop cannot lose.
 /// </summary>
 public static class Program
 {
-    /// <summary>Where the token comes from in production. Never a literal in this repository.</summary>
+    /// <summary>
+    /// The token, when it is not in the bot's database. Phase 1's mechanism, kept for local
+    /// development and for setting the bot up before the admin page has been used.
+    /// </summary>
     public const string TokenVariable = "ERP_TELEGRAM_TOKEN";
 
     public static async Task<int> Main(string[] args)
     {
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-        // Lets the same binary be `sc.exe create`d. Harmless when started from a console.
         builder.Services.AddWindowsService(o => o.ServiceName = "DawaiiTelegramBot");
-
         if (WindowsServiceHelpers.IsWindowsService())
             builder.Logging.AddEventLog(o => o.SourceName = "Dawaii Telegram Bot");
 
         builder.Services.Configure<BotOptions>(builder.Configuration.GetSection(BotOptions.Section));
+        BotOptions options = Read(builder);
 
-        string token = ResolveToken(builder);
-        if (token.Length == 0)
+        // ---- the bot's own database ----
+        string botPath = options.BotDatabasePath.Trim().Length > 0
+            ? options.BotDatabasePath.Trim()
+            : BotStore.DefaultPath;
+
+        var botStore = new BotStore(new SqliteConnectionFactory(botPath));
+        try
         {
-            // Refuse to start rather than run a loop that can never succeed. A service that appears
-            // to be running but silently cannot connect is worse than one that will not start: the
-            // Event Log entry says exactly what is wrong.
+            botStore.EnsureSchema();
+        }
+        catch (Exception ex)
+        {
+            // Nothing works without it: no token, no links, no audit. Refuse to start rather than
+            // poll forever while unable to authorize anybody.
+            Console.Error.WriteLine($"Cannot open the bot database at {botPath}: {ex.Message}");
+            return 3;
+        }
+        builder.Services.AddSingleton(botStore);
+
+        // ---- the token ----
+        //
+        // The admin page first, the environment variable second. That order is deliberate: once a
+        // manager has set the token in the program, that is the authoritative copy, and a stale
+        // variable left on the machine from setup must not silently override it.
+        string token = botStore.ReadToken() ?? "";
+        string source = "the admin page";
+        if (token.Trim().Length == 0)
+        {
+            token = ResolveTokenFromEnvironment(builder);
+            source = TokenVariable;
+        }
+
+        if (token.Trim().Length == 0)
+        {
             Console.Error.WriteLine(
-                $"No bot token. Set the {TokenVariable} environment variable, " +
-                "or Bot:Token in appsettings.json for local development only.");
+                "No bot token. Set it in Dawaii: Admin page -> Telegram setup, " +
+                $"or set the {TokenVariable} environment variable for local development.");
             return 2;
         }
 
-        builder.Services.AddSingleton<ITelegramBotClient>(_ => new TelegramBotClient(token));
+        // ---- the pharmacy's database, read-only in this version ----
+        DawaiiInstallation erp = options.ErpDirectory.Trim().Length > 0
+            ? DawaiiInstallation.FromDirectory(options.ErpDirectory.Trim())
+            : DawaiiInstallation.ForThisProgram();
+
+        IDbConnectionFactory erpDb;
+        try
+        {
+            erpDb = erp.CreateConnectionFactory();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Cannot reach the pharmacy database: {ex.Message}");
+            return 4;
+        }
+
+        builder.Services.AddSingleton(erpDb);
+        builder.Services.AddSingleton<IUserRepository>(_ => new SqliteUserRepository(erpDb));
+
+        builder.Services.AddSingleton<ITelegramBotClient>(_ => new TelegramBotClient(token.Trim()));
         builder.Services.AddSingleton<ITelegramGateway, TelegramGateway>();
 
-        builder.Services.AddSingleton<IAdminDirectory>(sp =>
-        {
-            BotOptions o = sp.GetRequiredService<IOptions<BotOptions>>().Value;
-            var directory = new ConfiguredAdminDirectory(o.AdminTelegramUserIds);
-
-            if (directory.Count == 0)
-            {
-                // Started but useless: it will poll, receive, and answer nobody. Worth saying loudly,
-                // because the symptom on the phone ("the bot ignores me") gives no hint of the cause.
-                sp.GetRequiredService<ILogger<ConfiguredAdminDirectory>>().LogWarning(
-                    "No administrators configured. Every command will be ignored. " +
-                    "Add numeric Telegram user IDs under Bot:AdminTelegramUserIds — see the README.");
-            }
-            return directory;
-        });
+        builder.Services.AddSingleton<LinkedAdminDirectory>();
+        builder.Services.AddSingleton<IAdminDirectory>(sp => sp.GetRequiredService<LinkedAdminDirectory>());
+        builder.Services.AddSingleton<ILinkService, LinkService>();
 
         builder.Services.AddSingleton(sp =>
-        {
-            BotOptions o = sp.GetRequiredService<IOptions<BotOptions>>().Value;
-            return new CommandAuthorizer(sp.GetRequiredService<IAdminDirectory>(), o.RateLimitPerMinute);
-        });
+            new CommandAuthorizer(sp.GetRequiredService<IAdminDirectory>(), options.RateLimitPerMinute));
+        builder.Services.AddSingleton(_ => new LinkThrottle(options.LinkAttemptsPerMinute));
 
         builder.Services.AddSingleton<CommandRouter>();
         builder.Services.AddHostedService<CommandWorker>();
 
         // Phase 4 adds the second hosted service, NotificationWorker, in this same process.
 
-        await builder.Build().RunAsync();
+        IHost host = builder.Build();
+
+        // Said once, at startup, because every one of these is a thing that fails silently and
+        // confusingly if it is wrong: a bot reading the wrong database reports empty stock, and a bot
+        // with nobody linked simply ignores its owner.
+        ILogger<object> log = host.Services.GetRequiredService<ILogger<object>>();
+        log.LogInformation("Token from {Source}.", source);
+        log.LogInformation("Bot database: {BotPath}", botPath);
+        log.LogInformation("Pharmacy database: {Mode}, config {Found} in {Directory}",
+            erp.IsServerMode ? "MySQL (network mode)" : "SQLite " + erp.DatabasePath,
+            erp.Found ? "found" : "NOT FOUND — assuming a default local install",
+            erp.Directory.Length > 0 ? erp.Directory : "(unset)");
+
+        int linked = 0;
+        try { linked = botStore.All().Count(u => u.IsActive); } catch { }
+        if (linked == 0)
+            log.LogWarning(
+                "No Telegram accounts are linked. Every command will be ignored until a manager " +
+                "generates a code in Dawaii (Admin page -> Telegram setup) and sends /link <code>.");
+        else
+            log.LogInformation("{Linked} Telegram account(s) linked.", linked);
+
+        await host.RunAsync();
         return 0;
     }
 
+    private static BotOptions Read(HostApplicationBuilder builder)
+    {
+        var options = new BotOptions();
+        builder.Configuration.GetSection(BotOptions.Section).Bind(options);
+        return options;
+    }
+
     /// <summary>
-    /// Environment variable first, appsettings second.
-    ///
-    /// That order matters: a developer's appsettings value must never quietly override the real token
-    /// on a pharmacy's machine. The fallback exists so nobody has to set a system variable just to
-    /// try the bot on their own laptop.
+    /// Environment variable first, then appsettings — so a developer's file can never override the
+    /// real token on a pharmacy's machine.
     /// </summary>
-    private static string ResolveToken(HostApplicationBuilder builder)
+    private static string ResolveTokenFromEnvironment(HostApplicationBuilder builder)
     {
         string fromEnvironment = Environment.GetEnvironmentVariable(TokenVariable) ?? string.Empty;
         if (fromEnvironment.Trim().Length > 0) return fromEnvironment.Trim();
