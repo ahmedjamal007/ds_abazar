@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -61,9 +61,26 @@ namespace Dawaii.Tests
             try
             {
                 ReportExporter.PdfSections(path, "تقرير الوردية", SampleSections());
-                byte[] head = File.ReadAllBytes(path);
-                Assert.That(head.Length, Is.GreaterThan(1000));
-                Assert.That(Encoding.ASCII.GetString(head, 0, 4), Is.EqualTo("%PDF"));
+
+                byte[] raw = File.ReadAllBytes(path);
+                Assert.That(raw.Length, Is.GreaterThan(1000));
+                Assert.That(Encoding.ASCII.GetString(raw, 0, 5), Is.EqualTo("%PDF-"));
+
+                // A file can start with %PDF- and still be unopenable, or open and hold nothing. The
+                // check that means something is reading it back: this is the only test standing
+                // between a PDF library swap and a pharmacist emailing an empty report to an
+                // accountant. Asserting on the first four bytes would have passed either way.
+                Assert.That(Encoding.ASCII.GetString(raw, raw.Length - 6, 5), Is.EqualTo("%%EOF"),
+                    "a truncated PDF still begins with %PDF-");
+
+                using (PdfSharp.Pdf.PdfDocument reopened =
+                       PdfSharp.Pdf.IO.PdfReader.Open(path, PdfSharp.Pdf.IO.PdfDocumentOpenMode.InformationOnly))
+                {
+                    Assert.That(reopened.PageCount, Is.GreaterThanOrEqualTo(1),
+                        "the report has content, so the PDF must have pages to put it on");
+                    Assert.That(reopened.Info.Title, Is.EqualTo("تقرير الوردية"),
+                        "and the Arabic title survives the round trip through the writer");
+                }
             }
             finally { File.Delete(path); }
         }

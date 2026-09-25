@@ -55,7 +55,7 @@
     <!-- Offline report exports (V1.2 req 1): NPOI writes .xlsx; PdfSharp writes .pdf
          (pages rendered with GDI so Arabic shapes correctly, then embedded as images). -->
     <PackageReference Include="NPOI" Version="2.5.6" />
-    <PackageReference Include="PdfSharp" Version="1.50.5147" />
+    <PackageReference Include="PDFsharp-gdi" Version="6.2.4" />
   </ItemGroup>
 
   <!-- Embed the logo so the splash/login screen works with no external file. -->
