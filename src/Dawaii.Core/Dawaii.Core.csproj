@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFrameworks>net48;net10.0</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <RootNamespace>Dawaii.Core</RootNamespace>
     <AssemblyName>Dawaii.Core</AssemblyName>
@@ -18,7 +18,7 @@
     <!-- Shared-server backend for network mode (V1.2 req 6): MySQL running as a Windows service. -->
     <PackageReference Include="MySql.Data" Version="8.0.33" />
     <!-- Pure-managed QR generation (PngByteQRCode needs no System.Drawing / network) for offline label printing -->
-    <PackageReference Include="QRCoder" Version="1.4.3" />
+    <PackageReference Include="QRCoder" Version="1.8.0" />
   </ItemGroup>
 
   <!-- Embed the SQL scripts so the app/initializer can create the schema and seed data

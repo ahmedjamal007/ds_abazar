@@ -51,11 +51,25 @@ namespace Dawaii.Core.Security
             return FixedTimeEquals(actual, expected);
         }
 
+        /// <summary>
+        /// PBKDF2-HMAC-SHA256. Both branches below compute the same standard and must produce byte-
+        /// for-byte identical output: a stored hash was derived by whichever branch was compiled at
+        /// the time, and every password in every pharmacy already on this software depends on the
+        /// other one agreeing with it. PasswordHasherTests pins that against an independent
+        /// implementation rather than against ourselves, which is the only way the agreement can
+        /// actually be checked.
+        /// </summary>
         private static byte[] Derive(string password, byte[] salt, int iterations, int length)
         {
-            // Rfc2898DeriveBytes with an explicit SHA-256 HMAC is available on .NET Framework 4.8.
+#if NETFRAMEWORK
+            // The constructor is the only route on .NET Framework, where the static below does not exist.
             using (var pbkdf2 = new Rfc2898DeriveBytes(password, salt, iterations, HashAlgorithmName.SHA256))
                 return pbkdf2.GetBytes(length);
+#else
+            // On modern .NET the constructors are obsolete (SYSLIB0060) and this is the sanctioned
+            // route. Same algorithm, same parameters, same bytes.
+            return Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, length);
+#endif
         }
 
         private static bool FixedTimeEquals(byte[] a, byte[] b)

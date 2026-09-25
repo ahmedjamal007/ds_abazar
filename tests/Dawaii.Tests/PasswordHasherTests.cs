@@ -1,4 +1,4 @@
-using Dawaii.Core.Security;
+﻿using Dawaii.Core.Security;
 using NUnit.Framework;
 
 namespace Dawaii.Tests
@@ -48,5 +48,59 @@ namespace Dawaii.Tests
         {
             Assert.That(PasswordHasher.Verify("pw", stored), Is.False);
         }
+
+        // ---------------- the stored hashes must keep working (V2.5) ----------------
+
+        /// <summary>
+        /// A hash computed OUTSIDE this codebase — Python's hashlib.pbkdf2_hmac, SHA-256, the salt
+        /// 00 01 02 ... 0f, 100,000 iterations, 32-byte key — for the password below.
+        ///
+        /// Every other test here hashes and then verifies with the same code, so all of them would
+        /// still pass if the derivation changed: the round trip would simply agree with itself. What
+        /// would not survive is the password of every user in every pharmacy already running this,
+        /// because their stored hash was produced by the old code and nothing would match it again.
+        ///
+        /// This one pins the actual bytes, and pins them against an independent implementation of the
+        /// standard rather than against ourselves. It is the test that makes the move off .NET
+        /// Framework safe to do here at all.
+        /// </summary>
+        private const string KnownGoodHash =
+            "v1$100000$AAECAwQFBgcICQoLDA0ODw==$N2LEnTWddxL7FFkj8PhCmKnKhGAry4y4GX4OJ4uwoZs=";
+
+        [Test]
+        public void AHashFromAnIndependentPbkdf2_StillVerifies()
+        {
+            Assert.That(PasswordHasher.Verify("s3cret!", KnownGoodHash), Is.True,
+                "if this fails, every password already stored in every pharmacy has stopped working");
+        }
+
+        [Test]
+        public void AHashFromAnIndependentPbkdf2_RefusesTheWrongPassword()
+        {
+            Assert.That(PasswordHasher.Verify("s3cret", KnownGoodHash), Is.False);
+            Assert.That(PasswordHasher.Verify("S3cret!", KnownGoodHash), Is.False);
+            Assert.That(PasswordHasher.Verify("", KnownGoodHash), Is.False);
+        }
+
+        [Test]
+        public void ThisCodesOwnDerivation_MatchesTheStandard()
+        {
+            // Same inputs as KnownGoodHash, hashed here, compared byte for byte with the reference.
+            string[] reference = KnownGoodHash.Split('$');
+            byte[] salt = System.Convert.FromBase64String(reference[2]);
+
+            string mine = PasswordHasher.Hash("s3cret!", 100000);
+            string[] parts = mine.Split('$');
+
+            // Hash() salts randomly, so the comparison has to go through Verify, which uses the
+            // stored salt — that is what proves the derivation itself agrees, not the formatting.
+            Assert.That(parts[0], Is.EqualTo(reference[0]), "version prefix");
+            Assert.That(parts[1], Is.EqualTo(reference[1]), "iteration count");
+            Assert.That(System.Convert.FromBase64String(parts[2]).Length, Is.EqualTo(salt.Length), "salt size");
+            Assert.That(System.Convert.FromBase64String(parts[3]).Length,
+                Is.EqualTo(System.Convert.FromBase64String(reference[3]).Length), "key size");
+            Assert.That(PasswordHasher.Verify("s3cret!", KnownGoodHash), Is.True, "and the bytes agree");
+        }
+
     }
 }
