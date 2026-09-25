@@ -27,6 +27,12 @@ namespace Dawaii.App.Forms
     /// </summary>
     public class TelegramSetupForm : BaseForm
     {
+        /// <summary>
+        /// Must match the bot service's OutboxMaxAttempts, or this page would disagree with the
+        /// worker about which messages have been given up on.
+        /// </summary>
+        private const int OutboxAttemptCap = 12;
+
         private readonly BotStore _bot;
         private readonly User _admin;
 
@@ -315,7 +321,15 @@ namespace Dawaii.App.Forms
                     LastSeen = u.LastSeenAt.HasValue ? Fmt.DateTime(u.LastSeenAt.Value) : "—"
                 }).ToList();
 
-                _dbPath.Text = "قاعدة بيانات البوت: " + BotStore.DefaultPath;
+                // The outbox, surfaced. A queued alert nobody can see is the silent failure this
+                // whole pattern otherwise invites: the manager believes they are being warned about
+                // low stock while a message has been stuck for a fortnight.
+                (int pending, int stuck) = _bot.OutboxHealth(OutboxAttemptCap);
+                string queue = stuck > 0
+                    ? "   |   رسائل متعطلة: " + stuck + " ⚠"
+                    : pending > 0 ? "   |   في الانتظار: " + pending : "";
+
+                _dbPath.Text = "قاعدة بيانات البوت: " + BotStore.DefaultPath + queue;
             }
             catch (Exception ex)
             {

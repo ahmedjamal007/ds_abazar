@@ -57,6 +57,38 @@ public sealed class BotOptions
     /// </summary>
     public string BotDatabasePath { get; set; } = string.Empty;
 
+    // ---------------- the outbox (phase 4) ----------------
+
+    /// <summary>
+    /// How often the outbox is checked. Five seconds: an alert is worth having promptly, and an
+    /// empty-queue check is one cheap local query.
+    /// </summary>
+    public int OutboxPollSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// How many failed deliveries before a message is left alone.
+    ///
+    /// It is NOT marked sent at that point — it was not sent — so it stays visible as a stuck row
+    /// with its last error. Without a cap, a message Telegram will never accept is retried every
+    /// five seconds for the life of the installation.
+    /// </summary>
+    public int OutboxMaxAttempts { get; set; } = 12;
+
+    /// <summary>Whether to send the daily low-stock digest at all.</summary>
+    public bool LowStockDigest { get; set; } = true;
+
+    /// <summary>Hour of the day (0-23, local) at or after which the digest is sent.</summary>
+    public int LowStockDigestHour { get; set; } = 9;
+
+    /// <summary>
+    /// How many drugs the digest names. The rest are a count, with /low for the full list: forty
+    /// names arriving unprompted is how a manager learns to stop reading the bot.
+    /// </summary>
+    public int LowStockDigestNames { get; set; } = 8;
+
+    public TimeSpan OutboxPollInterval =>
+        TimeSpan.FromSeconds(OutboxPollSeconds is > 0 and <= 300 ? OutboxPollSeconds : 5);
+
     public TimeSpan PollTimeout =>
         TimeSpan.FromSeconds(PollTimeoutSeconds is > 0 and <= 50 ? PollTimeoutSeconds : 30);
 }

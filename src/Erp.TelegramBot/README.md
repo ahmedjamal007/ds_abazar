@@ -5,9 +5,9 @@ A Telegram bot that lets the **pharmacy manager** check stock and pull reports f
 Runs as a Windows Service on the pharmacy's own PC. It reaches out to Telegram; nothing reaches in.
 No public IP, no open ports, no domain name, no webhooks.
 
-**Phase 3 — this is what exists today.** The bot links a manager's phone to their Dawaii account
-with a one-time code, and answers `/start`, `/help`, `/ping`, `/link`, `/stock` and `/low`. It reads
-the pharmacy's database and **never writes to it**.
+**Phase 4 — this is what exists today.** The bot answers `/start`, `/help`, `/ping`, `/link`,
+`/stock` and `/low`, and sends a **daily low-stock digest** through a durable outbox. It reads the
+pharmacy's database and **never writes to it**.
 
 ---
 
@@ -149,6 +149,36 @@ and restarting the PC starts it again on its own.
 
 Coming in later phases: `/sales`, `/report`.
 
+## Alerts
+
+Once a day, at **09:00** by default, the manager gets a digest of everything at or below its reorder
+level. Configure with `LowStockDigestHour`, or switch it off with `"LowStockDigest": false`.
+
+It is a **summary** — the count, how many are out entirely, and the worst few named — with `/low`
+for the full list. Forty drug names arriving unprompted at eight in the morning is how a manager
+learns to stop reading the bot.
+
+### Why it goes through an outbox
+
+Nothing that raises an alert talks to Telegram. It writes a row to `bot_outbox` and its job is done;
+the notification worker delivers it. That means:
+
+- **A message survives an outage.** Raised at 2am while the internet was down, delivered when the
+  connection returns — not lost.
+- **It survives a reboot.** A Windows Service restarts whenever the PC does, and a pending row is
+  still pending afterwards.
+- **The pharmacy never waits on Telegram** and never fails because Telegram is slow.
+
+A delivery that keeps failing is retried up to `OutboxMaxAttempts` (12), then **left alone rather
+than marked sent** — because it was not sent, and pretending otherwise would hide a real failure.
+It stays as a stuck row with its last error, and the admin page shows the count, so a message that
+has been undeliverable for a fortnight is visible rather than merely absent.
+
+The digest producer runs **in the bot**, not the desktop app. An alert producer in the app would only
+run while the app is open, and the end of a shift is exactly when a manager still wants alerts. The
+ERP can write outbox rows too — the queue is shared — so anything it wants to announce uses the same
+delivery path.
+
 ### How quantities are reported
 
 In **boxes and strips**, never in the single tablets the database stores. "1,247 tablets" is a
@@ -227,7 +257,7 @@ dotnet test tests/Erp.TelegramBot.Tests
 dotnet test tests/Dawaii.Tests --framework net10.0-windows
 ```
 
-99 bot tests over the authorization gate, both rate limiters, the command parser, the backoff curve,
-the paging arithmetic and every reply; plus 43 in the ERP suite over link codes, token sealing,
-machine-secret purposes and the box/strip division. No token and no network needed: everything Telegram-specific sits behind one interface
+111 bot tests over the authorization gate, both rate limiters, the command parser, the backoff
+curve, the paging arithmetic, the digest's restraint and every reply; plus 61 in the ERP suite over
+link codes, the outbox lifecycle, token sealing, machine-secret purposes and the box/strip division. No token and no network needed: everything Telegram-specific sits behind one interface
 (`ITelegramGateway`), and only `TelegramGateway.cs` references the client library.

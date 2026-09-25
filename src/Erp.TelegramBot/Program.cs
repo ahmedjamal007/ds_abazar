@@ -151,7 +151,11 @@ public static class Program
         builder.Services.AddSingleton<CommandRouter>();
         builder.Services.AddHostedService<CommandWorker>();
 
-        // Phase 4 adds the second hosted service, NotificationWorker, in this same process.
+        // Two more hosted services in this same process, deliberately independent of the command
+        // loop: a manager typing commands has nothing to do with an alert going out, and neither
+        // should be able to stall the other.
+        builder.Services.AddHostedService<NotificationWorker>();
+        builder.Services.AddHostedService<LowStockAlertWorker>();
 
         IHost host = builder.Build();
 

@@ -233,6 +233,106 @@ namespace Dawaii.Core.Bot
             => _db.Execute("UPDATE bot_user SET last_seen_at=@t WHERE telegram_user_id=@tg",
                 ("@t", Db.Time(now)), ("@tg", telegramUserId));
 
+        // ---------------- the outbox ----------------
+
+        /// <summary>
+        /// Queues a message for delivery.
+        ///
+        /// This is the whole point of the outbox: the caller's job finishes the moment the row is
+        /// written. The pharmacy never waits on Telegram, never fails because Telegram is down, and
+        /// never loses a message to a reboot — the row is simply still pending when the service comes
+        /// back. An alert that only works when the internet does is not worth having.
+        /// </summary>
+        /// <param name="audience">
+        /// <see cref="OutboxMessage.Admins"/> for every linked administrator, or a Telegram user id
+        /// as a string for one person.
+        /// </param>
+        public void Enqueue(string audience, string body, DateTime now)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return;
+
+            _db.Execute(
+                "INSERT INTO bot_outbox (audience, body, created_at) VALUES (@a, @b, @t)",
+                ("@a", Db.Text(string.IsNullOrWhiteSpace(audience) ? OutboxMessage.Admins : audience.Trim())),
+                ("@b", Db.Text(body)),
+                ("@t", Db.Time(now)));
+        }
+
+        /// <summary>
+        /// Messages still to deliver, oldest first.
+        ///
+        /// Rows that have already failed <paramref name="maxAttempts"/> times are left out rather than
+        /// retried forever. A message that cannot be delivered — a chat the manager deleted, a body
+        /// Telegram rejects — would otherwise be picked up every five seconds for the life of the
+        /// installation. Excluded rather than marked sent: it is NOT sent, and pretending otherwise
+        /// would hide it. It stays visible as a stuck row with its last error, which is what makes it
+        /// diagnosable.
+        /// </summary>
+        public IReadOnlyList<OutboxMessage> Pending(int maxAttempts, int limit)
+            => _db.Query(
+                "SELECT id, audience, body, created_at, attempts, last_error FROM bot_outbox " +
+                "WHERE sent_at IS NULL AND attempts < @max ORDER BY created_at, id LIMIT @n",
+                r => new OutboxMessage
+                {
+                    Id = Db.GetInt(r, "id"),
+                    Audience = Db.GetStringN(r, "audience"),
+                    Body = Db.GetStringN(r, "body"),
+                    CreatedAt = Db.GetTime(r, "created_at"),
+                    Attempts = Db.GetInt(r, "attempts"),
+                    LastError = Db.GetStringN(r, "last_error"),
+                },
+                ("@max", maxAttempts), ("@n", limit));
+
+        /// <summary>Marks a message delivered. It will never be selected again.</summary>
+        public void MarkSent(int id, DateTime now)
+            => _db.Execute("UPDATE bot_outbox SET sent_at=@t, last_error=NULL WHERE id=@id",
+                ("@t", Db.Time(now)), ("@id", id));
+
+        /// <summary>
+        /// Records a failed delivery and counts the attempt. sent_at stays NULL, so the message is
+        /// retried — until the attempt cap, after which it stays here as a stuck row rather than
+        /// disappearing or being retried forever.
+        /// </summary>
+        public void MarkFailed(int id, string error)
+            => _db.Execute(
+                "UPDATE bot_outbox SET attempts = attempts + 1, last_error = @e WHERE id = @id",
+                ("@e", Db.Text(Trim(error, 500))), ("@id", id));
+
+        /// <summary>How the queue is doing, for the admin page: waiting, and given up on.</summary>
+        public (int Pending, int Stuck) OutboxHealth(int maxAttempts)
+        {
+            int pending = 0, stuck = 0;
+            foreach (var row in _db.Query(
+                "SELECT " +
+                "  SUM(CASE WHEN attempts <  @max THEN 1 ELSE 0 END) AS waiting, " +
+                "  SUM(CASE WHEN attempts >= @max THEN 1 ELSE 0 END) AS stuck " +
+                "FROM bot_outbox WHERE sent_at IS NULL",
+                r => (Waiting: Db.GetIntN(r, "waiting") ?? 0, Stuck: Db.GetIntN(r, "stuck") ?? 0),
+                ("@max", maxAttempts)))
+            {
+                pending = row.Waiting;
+                stuck = row.Stuck;
+            }
+            return (pending, stuck);
+        }
+
+        /// <summary>Everyone a broadcast goes to: active links only.</summary>
+        public IReadOnlyList<BotUser> ActiveRecipients()
+            => _db.Query(
+                "SELECT telegram_user_id, chat_id, erp_user_id, role, is_active, linked_at, last_seen_at " +
+                "FROM bot_user WHERE is_active=1",
+                ReadUser);
+
+        // ---------------- remembering what has already been said ----------------
+
+        /// <summary>
+        /// A small piece of the bot's own state, by name. Used by the alert producers to remember what
+        /// they have already sent, so a service restart does not re-announce yesterday's news.
+        /// </summary>
+        public string ReadMark(string key) => Setting("mark:" + key);
+
+        public void WriteMark(string key, string value) => Upsert("mark:" + key, value);
+
         // ---------------- the audit log ----------------
 
         /// <summary>
