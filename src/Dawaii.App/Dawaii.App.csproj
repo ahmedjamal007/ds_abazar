@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Dawaii.App</RootNamespace>
@@ -18,12 +18,30 @@
     <ProjectReference Include="..\Dawaii.Core\Dawaii.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- WPF is used headlessly by the receipt printer, never for a window. On .NET Framework it comes
+       from the GAC by assembly name; on modern .NET it is an SDK switch and the names do not resolve. -->
+  <PropertyGroup Condition="'$(TargetFramework)' != 'net48'">
+    <UseWPF>true</UseWPF>
+
+    <!-- WFO1000 asks every public property on a custom control to declare how the Windows Forms
+         DESIGNER should serialize it into generated code. On modern .NET it is an error by default.
+         This application has no designer surface at all: there is not one .Designer.cs or .resx in
+         the project, every screen is built by hand in code, and these controls are never dropped onto
+         a design canvas. The analyzer is describing a failure mode that cannot occur here, and the
+         alternative is DesignerSerializationVisibility attributes on two dozen properties to satisfy
+         a tool nobody runs. Revisit this the day the project gains a designer file. -->
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <!-- DPAPI (ProtectedData) for the encrypted "remember me" password on the login screen. -->
     <Reference Include="System.Security" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!-- No DPAPI reference on modern .NET: ProtectedData is part of the shared framework there, and
+       referencing the package explicitly earns NU1510. Only .NET Framework needs it named. -->
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
     <!-- WPF, used headlessly by the receipt printer (V2.2). Not for any window: WPF's FormattedText
          goes through DirectWrite, which shapes and connects Arabic properly and lets the receipt be
          rasterised to the print head's exact dot width. GDI could not be made to do either reliably. -->

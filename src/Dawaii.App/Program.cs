@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows.Forms;
 using Dawaii.App.Forms;
 using Dawaii.App.Ui;
@@ -10,6 +10,12 @@ namespace Dawaii.App
         [STAThread]
         private static void Main()
         {
+            // The legacy Windows code pages are not in modern .NET's runtime. Arabic receipts need
+            // CP1256 and PdfSharp needs CP1252, and both fail in ways that are hard to trace from
+            // where they surface — a garbled till roll, an export that throws inside a library. Put
+            // the provider in place once, before anything can want it.
+            Dawaii.Core.Printing.LegacyEncodings.Register();
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);

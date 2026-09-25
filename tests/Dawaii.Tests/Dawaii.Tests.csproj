@@ -1,12 +1,14 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFrameworks>net48;net10.0-windows</TargetFrameworks>
     <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <!-- The POS multi-cart tests drive the real WinForms module. -->
     <UseWindowsForms>true</UseWindowsForms>
     <RootNamespace>Dawaii.Tests</RootNamespace>
+    <!-- Same reason as the app: no designer surface exists in this solution. -->
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

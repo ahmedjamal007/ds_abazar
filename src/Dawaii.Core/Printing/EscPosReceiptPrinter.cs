@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Text;
 using Dawaii.Core.Models;
@@ -52,20 +52,17 @@ namespace Dawaii.Core.Printing
         /// <summary>
         /// Windows-1256, the Arabic code page the printer has just been told to expect.
         ///
-        /// On .NET Framework this is built in. On modern .NET it is NOT: the legacy code pages moved
-        /// into System.Text.Encoding.CodePages and <see cref="Encoding.GetEncoding(int)"/> throws
-        /// until a provider is registered. That matters here more than it looks, because the receipt
-        /// has already been sent ESC t 22 telling the head to decode CP1256 — so falling back to UTF-8
-        /// does not print English, it prints a roll of garbage, with no exception and nothing logged.
+        /// Modern .NET does not carry the legacy code pages; <see cref="LegacyEncodings"/> puts the
+        /// provider in place. That matters here more than it looks, because the receipt has already
+        /// been sent ESC t 22 telling the head to decode CP1256 — so falling back to UTF-8 does not
+        /// print English, it prints a roll of garbage, with no exception and nothing logged.
         ///
-        /// <see cref="TryRegisterCodePages"/> puts the provider in place where one is needed. The
-        /// fallback stays as a last resort rather than a throw, because this is called while a sale is
-        /// being rung up and a missing code page must not stop the pharmacy selling — but
-        /// <see cref="UsesArabicCodePage"/> lets anyone who cares find out that it happened.
+        /// The fallback stays a last resort rather than a throw, because this runs while a sale is
+        /// being rung up and a missing code page must not stop the pharmacy selling.
         /// </summary>
         private static Encoding GetArabicEncoding()
         {
-            TryRegisterCodePages();
+            LegacyEncodings.Register();
             try { return Encoding.GetEncoding(1256); }
             catch { return Encoding.UTF8; }
         }
@@ -74,29 +71,7 @@ namespace Dawaii.Core.Printing
         /// True when receipts really are being encoded as Windows-1256, false when the code page was
         /// unreachable and UTF-8 is standing in — which the printer will render as garbage.
         /// </summary>
-        public static bool UsesArabicCodePage => GetArabicEncoding().CodePage == 1256;
+        public static bool UsesArabicCodePage => LegacyEncodings.IsAvailable(1256);
 
-        private static bool _codePagesTried;
-
-        /// <summary>
-        /// Registers the legacy code-page provider, once, if this runtime has one. Reflection rather
-        /// than a direct call so the same source builds against .NET Framework, where the type does
-        /// not exist and none of this is needed.
-        /// </summary>
-        private static void TryRegisterCodePages()
-        {
-            if (_codePagesTried) return;
-            _codePagesTried = true;
-            try
-            {
-                Type provider = Type.GetType(
-                    "System.Text.CodePagesEncodingProvider, System.Text.Encoding.CodePages");
-                if (provider == null) return;
-
-                var instance = provider.GetProperty("Instance")?.GetValue(null) as EncodingProvider;
-                if (instance != null) Encoding.RegisterProvider(instance);
-            }
-            catch { /* nothing to register, or a runtime that does not need it */ }
-        }
     }
 }

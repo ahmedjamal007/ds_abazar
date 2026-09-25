@@ -42,5 +42,49 @@ namespace Dawaii.Tests
             Assert.That(cp1256.GetString(bytes), Is.EqualTo("\u062f\u0648\u0627\u0621"),
                 "and it survives the round trip");
         }
+
+        // ---------------- the same root cause, in a second place (V2.5) ----------------
+
+        /// <summary>
+        /// CP1252, which nothing in this codebase asks for by name.
+        ///
+        /// PdfSharp encodes WinAnsi strings with it while saving ANY document — even one that is
+        /// nothing but images, because the metadata dates go through it. On modern .NET the legacy
+        /// code pages are not in the runtime, so the export died with NotSupportedException thrown
+        /// from inside the library, several frames below anything this project wrote.
+        ///
+        /// It is the identical cause as the receipt bug above, surfacing somewhere completely
+        /// unrelated, which is why registration belongs at startup rather than in whichever component
+        /// happened to notice first.
+        /// </summary>
+        [Test]
+        public void TheWinAnsiCodePage_IsAvailable_SoReportsCanBeSaved()
+        {
+            Assert.That(LegacyEncodings.IsAvailable(1252), Is.True,
+                "without this, exporting any PDF throws from inside PdfSharp");
+        }
+
+        [Test]
+        public void RegisteringTheCodePages_IsSafeToRepeat()
+        {
+            // Called from Program.Main, from the receipt printer and from the PDF exporter, because a
+            // test run or any other host that never calls Main still has to work.
+            Assert.DoesNotThrow(() =>
+            {
+                LegacyEncodings.Register();
+                LegacyEncodings.Register();
+                LegacyEncodings.Register();
+            });
+
+            Assert.That(LegacyEncodings.IsAvailable(1256), Is.True);
+        }
+
+        [Test]
+        public void ACodePageThatDoesNotExist_IsReportedAsUnavailable_NotThrown()
+        {
+            Assert.That(LegacyEncodings.IsAvailable(999999), Is.False,
+                "callers ask so they can fall back, not so they can catch");
+        }
+
     }
 }

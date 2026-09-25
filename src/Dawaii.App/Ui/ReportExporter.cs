@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -7,6 +7,7 @@ using System.Text;
 using System.Windows.Forms;
 using NPOI.SS.UserModel;
 using NPOI.XSSF.UserModel;
+using Dawaii.Core.Printing;
 using PdfSharp.Drawing;
 using PdfSharp.Pdf;
 
@@ -147,6 +148,12 @@ namespace Dawaii.App.Ui
 
         public static void PdfSections(string path, string title, IList<ReportSection> sections)
         {
+            // PdfSharp encodes WinAnsi strings with CP1252 while saving any document at all — even a
+            // PDF of nothing but images, because the metadata dates go through it. Modern .NET does
+            // not carry the legacy code pages, so without this the save throws NotSupportedException
+            // from deep inside the library and the export dies at the last step.
+            LegacyEncodings.Register();
+
             var doc = new PdfDocument();
             doc.Info.Title = title;
 
