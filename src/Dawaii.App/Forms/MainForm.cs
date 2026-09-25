@@ -20,7 +20,7 @@ namespace Dawaii.App.Forms
     /// </summary>
     public class MainForm : BaseForm
     {
-        private Panel _sidebar, _content, _topbar;
+        private Panel _sidebar, _content, _topbar, _nav;
         private Label _topTitle;
         private readonly List<SideNavItem> _navItems = new List<SideNavItem>();
         private ModuleControl _current;
@@ -99,7 +99,16 @@ namespace Dawaii.App.Forms
             _sidebar.Controls.Clear();
             _navItems.Clear();
 
-            // Bottom: user card + logout.
+            // The entries live in their own panel so they can SCROLL. A manager signs in to eleven of
+            // them plus the header and the user card, and on a laptop screen the last one or two had
+            // nowhere to go — not clipped in a way anyone would notice, simply unreachable. Added
+            // first, and filling what is left, so the edge-docked header and user card claim their
+            // space before it does.
+            _nav = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Surface };
+            _sidebar.Controls.Add(_nav);
+
+            // Bottom: user card + logout. Outside the scroller on purpose — signing out must never be
+            // the thing that scrolled off the end.
             _sidebar.Controls.Add(BuildUserCard());
 
             // Middle nav — added bottom-up (each Dock.Top; last added shows first).
@@ -160,10 +169,10 @@ namespace Dawaii.App.Forms
             // screen and never sees it (V1.8, restored in V2.3).
             if (Session.CanManageInventory)
             {
-                // Prices are raised by the same people who enter deliveries (V2.3): a multiplier over
-                // the current selling price, rounded to a sayable figure, or a price typed by hand —
-                // previewed, then applied. Listed just below the stockroom.
-                AddNavItem("زيادة الأسعار", "cash", () => new PricingModule());
+                // Prices are changed by the same people who enter deliveries (V2.3): a multiplier on
+                // the current selling price — up or down, since V2.4 — rounded to a sayable figure, or
+                // a price typed by hand; previewed, then applied. Listed just below the stockroom.
+                AddNavItem("تعديل الأسعار", "cash", () => new PricingModule());
                 AddNavItem("الأصناف والمخزون", "box", () => new ItemsModule());
             }
 
@@ -258,7 +267,7 @@ namespace Dawaii.App.Forms
         {
             var item = new SideNavItem(text, icon) { Dock = DockStyle.Top };
             item.Activated += (s, e) => Navigate(text, factory(), item);
-            _sidebar.Controls.Add(item);
+            _nav.Controls.Add(item);
             _navItems.Add(item);
         }
 
@@ -266,7 +275,7 @@ namespace Dawaii.App.Forms
         {
             var item = new SideNavItem(text, icon) { Dock = DockStyle.Top };
             item.Activated += (s, e) => open();
-            _sidebar.Controls.Add(item);
+            _nav.Controls.Add(item);
         }
 
         // ---------------- navigation ----------------

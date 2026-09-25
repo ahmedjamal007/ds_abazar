@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace Dawaii.Core.Services
 {
@@ -15,7 +15,7 @@ namespace Dawaii.Core.Services
     /// price or the strips-per-box count re-derives them with no way for the two to drift apart.
     ///
     /// V2.3 adds the one thing this rule used to say it did not have: a multiplier that raises the
-    /// shelf price, applied on the زيادة الأسعار screen, with the result rounded to a price a customer
+    /// shelf price, applied on the تعديل الأسعار screen, with the result rounded to a price a customer
     /// can actually be charged. Both live here rather than in a second utility, so there is still
     /// exactly one place that knows how a box, a strip and a single unit relate.
     /// </summary>
