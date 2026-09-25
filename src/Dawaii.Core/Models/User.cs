@@ -27,14 +27,23 @@ namespace Dawaii.Core.Models
         public bool CanManageInventory => Role == Role.Admin || Role == Role.FullEmployee;
 
         /// <summary>
-        /// The buying side — companies, their orders, and what is still owed on them. The manager and
-        /// the "موظف ذو امتيازات".
+        /// The buying side — companies, their orders, what is still owed on them, and paying it.
+        /// Every member of staff (V2.4).
         ///
-        /// Kept as a right of its own rather than folded back into <see cref="CanManageInventory"/>:
-        /// the two cover the same people today, but they answer different questions, and what a
-        /// supplier is owed is not the same kind of fact as a shelf quantity.
+        /// It was the manager and the "موظف ذو امتيازات". Deliveries do not wait for either: the
+        /// distributor's driver is at the door now, and whoever is standing there has to be able to
+        /// take the boxes and type the invoice. Making that wait for the right person to be free is
+        /// how a delivery ends up entered from memory hours later, or not at all.
+        ///
+        /// Kept as a right of its own rather than folded back into <see cref="CanManageInventory"/> —
+        /// they now cover different people, and what a supplier is owed was never the same kind of
+        /// fact as a shelf quantity. What stays out of a plain cashier's reach: deleting a company and
+        /// the purchase report (both the manager's), and the catalogue and stockroom, which remain
+        /// behind <see cref="CanManageInventory"/>. The one crossing point is opening a drug that
+        /// arrives on a delivery — see InventoryService.CreateItemForDelivery.
         /// </summary>
-        public bool CanManagePurchasing => Role == Role.Admin || Role == Role.FullEmployee;
+        public bool CanManagePurchasing
+            => Role == Role.Admin || Role == Role.FullEmployee || Role == Role.Cashier;
 
         /// <summary>True for the manager and for "موظف ذو امتيازات" — the customers and debt ledger
         /// screen. The privileged employee looks after the accounts at the counter: they may open the

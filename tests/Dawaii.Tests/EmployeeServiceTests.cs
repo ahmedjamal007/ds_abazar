@@ -365,5 +365,36 @@ namespace Dawaii.Tests
             Assert.That(row.SalesTotal, Is.EqualTo(20m));
             Assert.That(row.MoneyExpenses, Is.EqualTo(15m));
         }
+
+        // ---------------- clocking in (V2.4) ----------------
+
+        [Test]
+        public void RecordLogin_PutsTheClockInOnFile()
+        {
+            _svc.RecordLogin(_emp, "till-1");
+
+            AttendanceEntry entry = _svc.AttendanceOn(DateTime.Today, _emp.Id).Single();
+            Assert.That(entry.Terminal, Is.EqualTo("till-1"));
+        }
+
+        [Test]
+        public void RecordLogin_WithNobodySignedIn_DoesNothingRatherThanThrowing()
+        {
+            Assert.DoesNotThrow(() => _svc.RecordLogin(null, "till-1"));
+            Assert.That(_svc.AttendanceOn(DateTime.Today), Is.Empty);
+        }
+
+        [Test]
+        public void RecordLogin_LetsAWriteFailureOut_RatherThanHidingIt()
+        {
+            // The login screen catches this and logs it, so a pharmacist whose clock-in will not save
+            // can still open the till. That only works while the failure actually gets out: a catch
+            // added in here would make the handler up there dead code and put attendance back to
+            // failing silently, which is how it stopped being diagnosable in the first place.
+            // Payroll is worked out from these rows.
+            _repo.AddAttendanceThrows = true;
+
+            Assert.Throws<InvalidOperationException>(() => _svc.RecordLogin(_emp, "till-1"));
+        }
     }
 }

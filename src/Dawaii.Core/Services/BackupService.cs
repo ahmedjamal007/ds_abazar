@@ -47,9 +47,27 @@ namespace Dawaii.Core.Services
 
         public BackupRecord LastSuccess() => _backups.GetLatestSuccess();
 
-        /// <summary>Runs a backup if none succeeded today and a folder is configured (FR-BAK-01). Never throws.</summary>
-        public bool RunDailyIfDue()
+        /// <summary>Runs a backup if none succeeded today and a folder is configured (FR-BAK-01).</summary>
+        public bool RunDailyIfDue() => RunDailyIfDue(out _);
+
+        /// <summary>
+        /// Runs a backup if none succeeded today and a folder is configured (FR-BAK-01).
+        ///
+        /// Never throws. It runs on a background thread while the login screen is coming up, and an
+        /// escaping exception there would take the program down before the pharmacist had signed in.
+        ///
+        /// <paramref name="failure"/> is what went wrong, when the attempt actually failed. Returning
+        /// false is not a failure by itself: no folder configured, and one already taken today, are
+        /// both ordinary and recording either would bury the real thing among them.
+        ///
+        /// The reason used to be swallowed here and the caller wrapped this in a catch that could
+        /// never fire, so a backup that had quietly stopped working — an unplugged drive, a folder
+        /// somebody moved — left nothing to read. The staleness warning tells a pharmacist their
+        /// backups are old; this is what tells them why.
+        /// </summary>
+        public bool RunDailyIfDue(out Exception failure)
         {
+            failure = null;
             try
             {
                 if (string.IsNullOrWhiteSpace(_settings.Get("backup_folder"))) return false;
@@ -58,7 +76,11 @@ namespace Dawaii.Core.Services
                 CreateBackup();
                 return true;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                failure = ex;
+                return false;
+            }
         }
 
         public string CreateBackup()

@@ -23,7 +23,14 @@ namespace Dawaii.Tests.Fakes
 
         public FakeEmployeeRepository(FakeStockRepository stock = null) { _stock = stock; }
 
-        public int AddAttendance(AttendanceEntry entry) { entry.Id = _id++; Attendance.Add(entry); return entry.Id; }
+        /// <summary>Set to make the attendance write fail, the way a locked database does.</summary>
+        public bool AddAttendanceThrows;
+
+        public int AddAttendance(AttendanceEntry entry)
+        {
+            if (AddAttendanceThrows) throw new InvalidOperationException("database is locked");
+            entry.Id = _id++; Attendance.Add(entry); return entry.Id;
+        }
 
         public IReadOnlyList<AttendanceEntry> GetAttendance(DateTime fromInclusive, DateTime toExclusive, int? userId = null)
             => Attendance.Where(a => a.LoginAt >= fromInclusive && a.LoginAt < toExclusive

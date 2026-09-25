@@ -97,11 +97,13 @@ namespace Dawaii.Tests
         {
             int id = _userService.CreateUser(_admin, "sara", "cashierpw", "سارة", Role.Cashier);
 
+            // Read through CanManageInventory, not CanManagePurchasing: buying belongs to every member
+            // of staff since V2.4, so it no longer tells the two roles apart. The stockroom does.
             _userService.SetRole(_admin, id, Role.FullEmployee);
-            Assert.That(_users.GetById(id).CanManagePurchasing, Is.True);
+            Assert.That(_users.GetById(id).CanManageInventory, Is.True);
 
             _userService.SetRole(_admin, id, Role.Cashier);
-            Assert.That(_users.GetById(id).CanManagePurchasing, Is.False, "access can be withdrawn again");
+            Assert.That(_users.GetById(id).CanManageInventory, Is.False, "access can be withdrawn again");
         }
 
         [Test]

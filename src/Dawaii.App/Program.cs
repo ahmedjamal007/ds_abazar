@@ -53,8 +53,13 @@ namespace Dawaii.App
             // Automatic daily backup (FR-BAK-01) — best effort, never blocks startup.
             System.Threading.Tasks.Task.Run(() =>
             {
-                try { services.Backup.RunDailyIfDue(); }
-                catch (Exception ex) { Log.Error("Daily backup", ex); }   // best effort, but not unrecorded
+                // RunDailyIfDue never throws, so a catch around it is dead code — which is exactly
+                // what used to be here, under a comment claiming failures were recorded. They were
+                // not. The reason comes back instead, and only a real failure is worth writing down:
+                // "no folder configured" and "already done today" are both ordinary.
+                Exception failure;
+                services.Backup.RunDailyIfDue(out failure);
+                if (failure != null) Log.Error("Daily backup", failure);
             });
 
             // Login → Main loop. Logging out returns to the login screen.
@@ -66,7 +71,13 @@ namespace Dawaii.App
                         return; // user closed the login window
 
                     // V1.2 req 2: attendance — record the clock-in automatically at login.
-                    try { services.Employees.RecordLogin(Session.CurrentUser, AppConfig.TerminalName); } catch { }
+                    //
+                    // Deliberately non-fatal: a pharmacist whose clock-in will not save must still be
+                    // able to open the till and serve the person in front of them. But it is no longer
+                    // silent. This swallowed everything, so attendance could stop recording for weeks
+                    // — payroll is worked out from these rows — and there was nothing to read.
+                    try { services.Employees.RecordLogin(Session.CurrentUser, AppConfig.TerminalName); }
+                    catch (Exception ex) { Log.Error("Attendance clock-in", ex); }
 
                     using (var main = new MainForm())
                     {

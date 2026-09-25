@@ -8,7 +8,7 @@ obj/
 # download is one click from the repo; older builds stay local. Update the exception
 # when a new version ships, or the new installer will be silently ignored.
 installer/Output/*
-!installer/Output/Dawaii-Setup-2.4.exe
+!installer/Output/Dawaii-Setup-2.5.exe
 
 # Recovery scratch from the lost-drive incident â€” the recovered edits are all applied
 _recovered/

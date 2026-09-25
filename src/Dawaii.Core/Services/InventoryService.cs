@@ -99,10 +99,37 @@ namespace Dawaii.Core.Services
         public int CreateItem(User actingUser, Item item)
         {
             RequireStaff(actingUser);
+            return Open(actingUser, item, "CreateItem");
+        }
+
+        /// <summary>
+        /// Opens a drug that has just arrived on a supplier's delivery (V2.4).
+        ///
+        /// This is the buying side's right, not the stockroom's: a delivery routinely carries a product
+        /// the pharmacy has never stocked, and whoever is unpacking it has to be able to put it on the
+        /// invoice they are typing. Requiring the stockroom right here would leave an employee stuck
+        /// mid-delivery with boxes on the counter, waiting for a manager to be free.
+        ///
+        /// It is deliberately the ONLY way the buying side can touch the catalogue. It creates a drug;
+        /// it cannot rename one, reprice one, receive stock by hand or dispose of anything — all of
+        /// which stay behind <see cref="CreateItem"/> and the rest of this service.
+        ///
+        /// Audited under its own action so a manager reading the log can tell a drug opened at the
+        /// counter during a delivery from one added deliberately in the catalogue screen.
+        /// </summary>
+        public int CreateItemForDelivery(User actingUser, Item item)
+        {
+            Guard.RequirePurchasingAccess(actingUser,
+                "إضافة صنف من فاتورة المشتريات متاحة لمن يملك صلاحية المشتريات.");
+            return Open(actingUser, item, "CreateItemOnDelivery");
+        }
+
+        private int Open(User actingUser, Item item, string auditAction)
+        {
             Validate(item);
             if (item.MinQuantity <= 0) item.MinQuantity = GetInt("low_stock_default", 0);
             int id = _items.Add(item);
-            Audit(actingUser, "CreateItem", "items", id, item.NameEn);
+            Audit(actingUser, auditAction, "items", id, item.NameEn);
             return id;
         }
 

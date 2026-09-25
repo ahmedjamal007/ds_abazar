@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -306,7 +306,9 @@ namespace Dawaii.App.Forms
         private void AddLine()
         {
             Item item;
-            using (var picker = new ItemPickerForm())
+            // forDelivery: the drug may be one the pharmacy has never stocked, and whoever is
+            // unpacking the boxes has to be able to put it on the invoice they are typing.
+            using (var picker = new ItemPickerForm(forDelivery: true))
             {
                 if (picker.ShowDialog(this) != DialogResult.OK || picker.Selected == null) return;
                 item = picker.Selected;

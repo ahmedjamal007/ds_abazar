@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -23,8 +23,19 @@ namespace Dawaii.App.Forms
 
         public Item Selected { get; private set; }
 
-        public ItemPickerForm()
+        /// <summary>
+        /// True when this picker is being used inside a supplier's delivery (V2.4).
+        ///
+        /// It decides which right "صنف جديد" needs. A delivery routinely carries a drug the
+        /// pharmacy has never stocked, so on that path opening one travels with the buying side; the
+        /// catalogue screen's own picker still asks for the stockroom right.
+        /// </summary>
+        private readonly bool _forDelivery;
+
+        public ItemPickerForm(bool forDelivery = false)
         {
+            _forDelivery = forDelivery;
+
             Text = "اختيار الصنف";
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = MinimizeBox = false;
@@ -49,6 +60,10 @@ namespace Dawaii.App.Forms
             pick.Location = new Point(20, 292);
             var create = Theme.ActionButton("صنف جديد", CreateNew, width: 130);
             create.Location = new Point(160, 292);
+            // Offered only to someone who may actually go through with it. The service refuses anyone
+            // else regardless, but a button that always ends in a permission error is worse than no
+            // button: mid-delivery it reads as the program being broken.
+            create.Visible = MayCreate;
             var cancel = Theme.ActionButton("إلغاء", Close, width: 130);
             cancel.Location = new Point(300, 292);
 
@@ -93,14 +108,21 @@ namespace Dawaii.App.Forms
             Select(_rows[idx]);
         }
 
+        /// <summary>Whether this user may open a new drug from this particular picker.</summary>
+        private bool MayCreate => _forDelivery ? Session.CanManagePurchasing : Session.CanManageInventory;
+
         private void CreateNew()
         {
+            if (!MayCreate) { Msg.Info("إضافة صنف جديد غير متاحة لك."); return; }
+
             try
             {
                 using (var dlg = new ItemForm { PrefillCode = _search.Text.Trim() })
                 {
                     if (dlg.ShowDialog(this) != DialogResult.OK) return;
-                    int id = Session.Services.Inventory.CreateItem(Session.CurrentUser, dlg.Result);
+                    int id = _forDelivery
+                        ? Session.Services.Inventory.CreateItemForDelivery(Session.CurrentUser, dlg.Result)
+                        : Session.Services.Inventory.CreateItem(Session.CurrentUser, dlg.Result);
                     if (!string.IsNullOrWhiteSpace(dlg.EnteredCode))
                     {
                         try { Session.Services.Codes.SetCode(Session.CurrentUser, id, dlg.EnteredCode); }

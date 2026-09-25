@@ -354,12 +354,20 @@ namespace Dawaii.Tests
         // ---------------- who may do this ----------------
 
         [Test]
-        public void PlainCashier_CannotBuyStock()
+        public void PlainCashier_MayBuyStock_ButNotDeleteACompany()
         {
+            // V2.4: buying moved to every member of staff. The driver is at the door now, and a
+            // delivery that waits for the right person tends to get typed from memory or not at all.
             int a = NewItem("a");
-            Assert.Throws<PermissionDeniedException>(() => _suppliers.CreateSupplier(_cashier, "شركة"));
-            Assert.Throws<PermissionDeniedException>(() => _suppliers.RecordInvoice(
+            Assert.DoesNotThrow(() => _suppliers.CreateSupplier(_cashier, "شركة"));
+            Assert.DoesNotThrow(() => _suppliers.RecordInvoice(
                 _cashier, _supplierId, null, "X", DateTime.Today, new[] { Line(a, 1, 10m, 20m) }));
+
+            // What did not move: a company is deleted by the manager, and the purchase report is theirs.
+            Assert.Throws<PermissionDeniedException>(
+                () => _suppliers.DeleteSupplier(_cashier, _supplierId));
+            Assert.Throws<PermissionDeniedException>(
+                () => _suppliers.OrdersInRange(_cashier, DateTime.Today, DateTime.Today.AddDays(1)));
         }
 
         [Test]
@@ -371,8 +379,10 @@ namespace Dawaii.Tests
             Assert.That(_privileged.CanManagePurchasing, Is.True);
             Assert.That(_privileged.IsAdmin, Is.False, "but still not a manager — money and staff stay closed");
 
-            Assert.That(_cashier.CanManageInventory, Is.False, "a plain cashier is still kept out of both");
-            Assert.That(_cashier.CanManagePurchasing, Is.False);
+            // V2.4 opened the buying side to everyone, so this is no longer what separates the roles.
+            // The stockroom still is: a plain cashier files deliveries but does not keep the catalogue.
+            Assert.That(_cashier.CanManagePurchasing, Is.True);
+            Assert.That(_cashier.CanManageInventory, Is.False, "the stockroom is what the promotion buys");
         }
 
         [Test]
@@ -822,12 +832,14 @@ namespace Dawaii.Tests
         }
 
         [Test]
-        public void Edit_IsRefusedForAPlainCashier()
+        public void Edit_ByAPlainCashier_IsAllowed()
         {
+            // Correcting a delivery is part of filing one (V2.4): whoever mistyped a quantity while the
+            // driver waited is the person standing there when the mistake is noticed.
             int panadol = NewItem("panadol");
             PurchaseInvoice filed = Record(0m, Line(panadol, 2, 1000m, 1400m));
 
-            Assert.Throws<PermissionDeniedException>(() => _suppliers.EditInvoice(
+            Assert.DoesNotThrow(() => _suppliers.EditInvoice(
                 _cashier, filed.Id, _supplierId, null, "X", DateTime.Today, LinesOf(filed.Id)));
         }
 
