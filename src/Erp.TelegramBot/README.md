@@ -5,9 +5,9 @@ A Telegram bot that lets the **pharmacy manager** check stock and pull reports f
 Runs as a Windows Service on the pharmacy's own PC. It reaches out to Telegram; nothing reaches in.
 No public IP, no open ports, no domain name, no webhooks.
 
-**Phase 2 — this is what exists today.** The bot connects, links a manager's phone to their Dawaii
-account with a one-time code, and answers `/start`, `/help`, `/ping` and `/link`. It reads the
-pharmacy's database only to check who is asking; there are no commands that report data yet.
+**Phase 3 — this is what exists today.** The bot links a manager's phone to their Dawaii account
+with a one-time code, and answers `/start`, `/help`, `/ping`, `/link`, `/stock` and `/low`. It reads
+the pharmacy's database and **never writes to it**.
 
 ---
 
@@ -144,8 +144,37 @@ and restarting the PC starts it again on its own.
 | `/start`, `/help` | usage |
 | `/ping` | replies `pong` — proves the bot is alive |
 | `/link <code>` | binds this Telegram account to a Dawaii manager account |
+| `/stock <barcode or name>` | what is on the shelf, with the batch breakdown |
+| `/low` | everything at or below its reorder level, paged |
 
-Coming in later phases: `/stock`, `/low`, `/sales`, `/report`.
+Coming in later phases: `/sales`, `/report`.
+
+### How quantities are reported
+
+In **boxes and strips**, never in the single tablets the database stores. "1,247 tablets" is a
+number nobody can picture; "12 boxes + 4 strips" is a thing you can walk over and look at. The exact
+unit total is given in brackets, because that is the figure which reconciles with every other screen
+in the program.
+
+A level of packaging is only reported when the catalogue actually records it. A drug with no strip
+size is reported in plain units rather than having packaging invented for it.
+
+### `/stock` shows batches, not warehouses
+
+This ERP has no warehouse concept and never has. The useful breakdown is by **batch** — lot number
+and expiry date, soonest first, which is the order the till sells them in. It is also the more
+valuable answer: it tells a manager not just how much they have but how much of it is about to be
+unsellable. Anything expiring within 90 days says how many days are left.
+
+### `/low` pages, and that is not cosmetic
+
+Telegram **refuses** a message over 4096 characters — it does not truncate it. A pharmacy with sixty
+drugs below their threshold would receive nothing at all and see a bot that ignored them, so the
+feature would break precisely at the pharmacies that need it most. Ten items a page, with buttons to
+walk through, and the page size is held against the limit by a test rather than chosen by eye.
+
+Pressing a button **edits the message in place** rather than sending another, so paging through does
+not fill the manager's chat with near-identical copies of one list.
 
 ## The database
 
@@ -184,6 +213,12 @@ sqlite3 "%ProgramData%\Dawaii\dawaii.bot.db" < db\bot.schema.sql
 - **Network failures back off** exponentially from 2 seconds to a 5-minute ceiling, with jitter. A
   pharmacy's connection dropping is normal operation, not a fault.
 - **One bad message never blocks the rest.** The update cursor advances even when handling throws.
+- **Read-only is structural, not a promise.** The pharmacy services the bot borrows are handed an
+  audit repository that THROWS on write. If a future change calls a mutating method it fails
+  immediately with a message saying so, rather than quietly appending rows to the pharmacy's audit
+  log under a user who was not there.
+- **Button presses are authorized like any command**, and the data coming back from the client is
+  treated as untrusted: a stale or forged page number produces a valid page, never an exception.
 
 ## Tests
 
@@ -192,7 +227,7 @@ dotnet test tests/Erp.TelegramBot.Tests
 dotnet test tests/Dawaii.Tests --framework net10.0-windows
 ```
 
-54 bot tests over the authorization gate, both rate limiters, the command parser, the backoff curve
-and every reply; plus 30 in the ERP suite over link codes, token sealing and the machine-secret
-purposes. No token and no network needed: everything Telegram-specific sits behind one interface
+99 bot tests over the authorization gate, both rate limiters, the command parser, the backoff curve,
+the paging arithmetic and every reply; plus 43 in the ERP suite over link codes, token sealing,
+machine-secret purposes and the box/strip division. No token and no network needed: everything Telegram-specific sits behind one interface
 (`ITelegramGateway`), and only `TelegramGateway.cs` references the client library.

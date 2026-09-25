@@ -2,7 +2,9 @@ using Dawaii.Core.Abstractions;
 using Dawaii.Core.Bot;
 using Dawaii.Core.Data;
 using Erp.TelegramBot.Commands;
+using Dawaii.Core.Services;
 using Erp.TelegramBot.Configuration;
+using Erp.TelegramBot.Pharmacy;
 using Erp.TelegramBot.Security;
 using Erp.TelegramBot.Telegram;
 using Erp.TelegramBot.Workers;
@@ -106,6 +108,34 @@ public static class Program
 
         builder.Services.AddSingleton(erpDb);
         builder.Services.AddSingleton<IUserRepository>(_ => new SqliteUserRepository(erpDb));
+
+        // The pharmacy's own repositories and services, so the bot's idea of "available" is the till's
+        // — sellable batches only, disposed stock excluded, FEFO order. A second implementation of
+        // "how much is on the shelf" that drifted from the first would be worse than no bot: the
+        // manager would be reading a number nobody else in the building agrees with.
+        //
+        // The audit repository REFUSES to write. Read-only is made structural rather than left as an
+        // intention: a future change that calls a mutating method throws here instead of quietly
+        // writing rows to the pharmacy's log under a user who was not there.
+        builder.Services.AddSingleton<IItemRepository>(_ => new SqliteItemRepository(erpDb));
+        builder.Services.AddSingleton<IStockRepository>(_ => new SqliteStockRepository(erpDb));
+        builder.Services.AddSingleton<IItemCodeRepository>(_ => new SqliteItemCodeRepository(erpDb));
+        builder.Services.AddSingleton<ISettingsRepository>(_ => new SqliteSettingsRepository(erpDb));
+        builder.Services.AddSingleton<IAuditRepository, RefusingAuditRepository>();
+
+        builder.Services.AddSingleton(sp => new InventoryService(
+            sp.GetRequiredService<IItemRepository>(),
+            sp.GetRequiredService<IStockRepository>(),
+            sp.GetRequiredService<ISettingsRepository>(),
+            sp.GetRequiredService<IAuditRepository>(),
+            sp.GetRequiredService<IItemCodeRepository>()));
+
+        builder.Services.AddSingleton(sp => new CodeService(
+            sp.GetRequiredService<IItemCodeRepository>(),
+            sp.GetRequiredService<IItemRepository>(),
+            sp.GetRequiredService<IAuditRepository>()));
+
+        builder.Services.AddSingleton<IPharmacyReader, PharmacyReader>();
 
         builder.Services.AddSingleton<ITelegramBotClient>(_ => new TelegramBotClient(token.Trim()));
         builder.Services.AddSingleton<ITelegramGateway, TelegramGateway>();

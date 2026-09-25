@@ -121,6 +121,12 @@ public sealed class CommandWorker : BackgroundService
 
     private async Task HandleAsync(Incoming message, CancellationToken ct)
     {
+        if (message.Press is { } press)
+        {
+            await HandlePressAsync(message, press, ct);
+            return;
+        }
+
         CommandLine command = CommandLine.Parse(message.Text, _botUsername);
         if (!command.IsCommand) return;     // a sticker, or someone chatting
 
@@ -142,9 +148,10 @@ public sealed class CommandWorker : BackgroundService
                 return;     // silence: a guesser learns nothing from being told to slow down
             }
 
-            string? linkReply = _router.Handle(command, sender);
+            Reply? linkReply = _router.Handle(command, sender);
             Audit(message, command, success: true, note: "link attempt");
-            if (linkReply != null) await _telegram.SendAsync(message.ChatId, linkReply, ct);
+            if (linkReply != null)
+                await _telegram.SendAsync(message.ChatId, linkReply.Text, linkReply.Buttons, ct);
             return;
         }
 
@@ -167,18 +174,59 @@ public sealed class CommandWorker : BackgroundService
             _log.LogInformation("Rate-limited Telegram user {TelegramUserId}.", message.TelegramUserId);
             Audit(message, command, success: false, note: "rate limited");
             await _telegram.SendAsync(message.ChatId,
-                "أوامر كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.", ct);
+                "أوامر كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.", null, ct);
             return;
         }
 
-        string? reply = _router.Handle(command, sender);
+        Reply? reply = _router.Handle(command, sender);
         Audit(message, command, success: true, note: null);
         TouchSeen(message.TelegramUserId);
 
         if (reply == null) return;
 
         _log.LogInformation("/{Verb} from {TelegramUserId}.", command.Verb, message.TelegramUserId);
-        await _telegram.SendAsync(message.ChatId, reply, ct);
+        await _telegram.SendAsync(message.ChatId, reply.Text, reply.Buttons, ct);
+    }
+
+    /// <summary>
+    /// A paging button press.
+    ///
+    /// Acknowledged FIRST, whatever happens next: until Telegram is told the press arrived, the
+    /// manager's client shows a spinner on the button, which reads as a bot that has hung. Then the
+    /// same authorization as any command — a button in an old chat is still a request, and the person
+    /// pressing it may have been revoked since it was sent.
+    /// </summary>
+    private async Task HandlePressAsync(Incoming message, Callback press, CancellationToken ct)
+    {
+        await _telegram.AcknowledgeAsync(press.Id, ct);
+
+        if (_authorizer.Check(message.TelegramUserId, DateTimeOffset.Now) != Access.Allowed)
+        {
+            _log.LogWarning("Ignored a button press from unauthorized Telegram user {TelegramUserId}.",
+                message.TelegramUserId);
+            AuditPress(message, press, success: false, note: "not an authorized administrator");
+            return;
+        }
+
+        Reply? reply = _router.HandlePress(press.Data);
+        AuditPress(message, press, success: reply != null, note: reply == null ? "unknown button" : null);
+        if (reply == null) return;
+
+        // Edited in place rather than sent again, so pressing "next" five times does not leave five
+        // near-identical copies of the list in the manager's chat.
+        await _telegram.EditAsync(message.ChatId, press.MessageId, reply.Text, reply.Buttons, ct);
+    }
+
+    private void AuditPress(Incoming message, Callback press, bool success, string? note)
+    {
+        try
+        {
+            _bot.Audit(message.TelegramUserId, "button", press.Data, success, note, DateTime.Now);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "Could not write the bot audit log.");
+        }
     }
 
     /// <summary>

@@ -1,5 +1,7 @@
 using Dawaii.Core.Bot;
+using Dawaii.Core.Models;
 using Erp.TelegramBot.Commands;
+using Erp.TelegramBot.Pharmacy;
 using NUnit.Framework;
 
 namespace Erp.TelegramBot.Tests;
@@ -23,6 +25,14 @@ public class CommandRouterTests
         }
     }
 
+    /// <summary>A pharmacy with nothing in it — these tests are about routing, not about reports.</summary>
+    private sealed class EmptyPharmacy : IPharmacyReader
+    {
+        public StockDetail FindOne(string query) => null;
+        public IReadOnlyList<Item> FindMany(string query, int limit) => [];
+        public IReadOnlyList<LowStockLine> LowStock() => [];
+    }
+
     private FakeLinking _linking;
     private CommandRouter _router;
     private static readonly Sender Manager = new(111222333, 111222333);
@@ -31,10 +41,10 @@ public class CommandRouterTests
     public void SetUp()
     {
         _linking = new FakeLinking();
-        _router = new CommandRouter(_linking);
+        _router = new CommandRouter(_linking, new EmptyPharmacy());
     }
 
-    private string Reply(string text) => _router.Handle(CommandLine.Parse(text), Manager);
+    private string Reply(string text) => _router.Handle(CommandLine.Parse(text), Manager)?.Text;
 
     // ---------------- the phase-1 commands ----------------
 
@@ -53,6 +63,8 @@ public class CommandRouterTests
         Assert.That(reply, Is.Not.Null);
         Assert.That(reply, Does.Contain("/ping"));
         Assert.That(reply, Does.Contain("/link"));
+        Assert.That(reply, Does.Contain("/stock"));
+        Assert.That(reply, Does.Contain("/low"));
         Assert.That(reply, Does.Contain("للمدير"),
             "the help must say plainly that this is for the manager only");
     }
@@ -62,7 +74,7 @@ public class CommandRouterTests
     {
         // Distinct from an unauthorized sender, who gets silence. An authorized manager who mistypes
         // is owed an answer, or the bot looks broken to the one person allowed to use it.
-        string reply = Reply("/stock ABC");
+        string reply = Reply("/definitelynotacommand");
 
         Assert.That(reply, Is.Not.Null);
         Assert.That(reply, Does.Contain("/help"));
