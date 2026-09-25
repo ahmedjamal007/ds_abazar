@@ -164,11 +164,18 @@ namespace Dawaii.App.Ui
                     bmp.Save(ms, ImageFormat.Png);
                     ms.Position = 0;
                     PdfPage page = doc.AddPage();
-                    page.Width = PageW;
-                    page.Height = PageH;
+
+                    // A4, declared in the unit PDF actually uses. PageW/PageH are PIXELS for the
+                    // bitmap above — 827x1169 is A4 at 100 DPI — and assigning them straight to
+                    // page.Width made every page 827 POINTS wide, which is 11.5 inches, not 8.27.
+                    // The aspect ratio matches so it looked right and scaled to fit when printed,
+                    // but a printer set to "actual size" would have cropped it. PDFsharp 6 marked
+                    // that implicit conversion obsolete for exactly this misreading.
+                    page.Size = PdfSharp.PageSize.A4;
+
                     using (XGraphics g = XGraphics.FromPdfPage(page))
                     using (XImage img = XImage.FromStream(ms))
-                        g.DrawImage(img, 0, 0, PageW, PageH);
+                        g.DrawImage(img, 0, 0, page.Width.Point, page.Height.Point);
                 }
             doc.Save(path);
         }

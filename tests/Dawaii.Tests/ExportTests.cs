@@ -74,12 +74,20 @@ namespace Dawaii.Tests
                     "a truncated PDF still begins with %PDF-");
 
                 using (PdfSharp.Pdf.PdfDocument reopened =
-                       PdfSharp.Pdf.IO.PdfReader.Open(path, PdfSharp.Pdf.IO.PdfDocumentOpenMode.InformationOnly))
+                       PdfSharp.Pdf.IO.PdfReader.Open(path, PdfSharp.Pdf.IO.PdfDocumentOpenMode.Import))
                 {
                     Assert.That(reopened.PageCount, Is.GreaterThanOrEqualTo(1),
                         "the report has content, so the PDF must have pages to put it on");
                     Assert.That(reopened.Info.Title, Is.EqualTo("تقرير الوردية"),
                         "and the Arabic title survives the round trip through the writer");
+
+                    // A4 is 595.28 x 841.89 POINTS. The page used to be declared 827 x 1169 points —
+                    // those numbers are the bitmap's PIXELS, A4 at 100 DPI — making every page 11.5
+                    // inches wide. The aspect ratio matched, so it looked right and scaled to fit
+                    // when printed; a printer set to "actual size" would have cropped it.
+                    PdfSharp.Pdf.PdfPage first = reopened.Pages[0];
+                    Assert.That(first.Width.Point, Is.EqualTo(595.28).Within(1.0), "A4 width in points");
+                    Assert.That(first.Height.Point, Is.EqualTo(841.89).Within(1.0), "A4 height in points");
                 }
             }
             finally { File.Delete(path); }
