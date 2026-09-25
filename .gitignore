@@ -20,3 +20,12 @@ _recovered/
 
 # Test output
 TestResults/
+
+# Bot secrets. The committed appsettings.json carries an EMPTY token as a template; the real one
+# comes from the ERP_TELEGRAM_TOKEN environment variable, or `dotnet user-secrets` for local work,
+# both of which live outside the repository. These patterns catch the local override files someone
+# will eventually paste a live token into. A leaked bot token can only be stopped by revoking it in
+# BotFather — there is no way to un-publish it.
+appsettings.Development.json
+appsettings.*.local.json
+*.local.json

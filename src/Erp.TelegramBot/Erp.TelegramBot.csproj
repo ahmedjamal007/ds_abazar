@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Erp.TelegramBot</RootNamespace>
+    <AssemblyName>Erp.TelegramBot</AssemblyName>
+    <UserSecretsId>dawaii-telegram-bot</UserSecretsId>
+    <Deterministic>true</Deterministic>
+    <Version>0.1.0</Version>
+    <!-- Headless service: never let a UI framework in here by accident. -->
+    <UseWindowsForms>false</UseWindowsForms>
+    <UseWPF>false</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Telegram.Bot" Version="22.10.3.1" />
+    <!-- Lets the same executable run as a console app for setup and as a Windows Service in production. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
+  </ItemGroup>
+
+  <!-- No reference to Dawaii.Core yet: phase 1 touches no ERP data at all, and a dependency added
+       before it is needed is one nobody remembers is unused. It arrives in phase 2 with /link. -->
+
+</Project>
