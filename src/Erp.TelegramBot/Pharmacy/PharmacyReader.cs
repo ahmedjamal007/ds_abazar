@@ -1,3 +1,4 @@
+using Dawaii.Core;
 using Dawaii.Core.Abstractions;
 using Dawaii.Core.Models;
 using Dawaii.Core.Services;
@@ -20,6 +21,9 @@ public sealed class PharmacyReader : IPharmacyReader
 {
     private readonly InventoryService _inventory;
     private readonly CodeService _codes;
+    private readonly ReportService _reports;
+    private readonly PosService _pos;
+    private readonly IUserRepository _users;
     private readonly IItemRepository _items;
     private readonly IStockRepository _stock;
     private readonly ILogger<PharmacyReader> _log;
@@ -30,12 +34,18 @@ public sealed class PharmacyReader : IPharmacyReader
     public PharmacyReader(
         InventoryService inventory,
         CodeService codes,
+        ReportService reports,
+        PosService pos,
+        IUserRepository users,
         IItemRepository items,
         IStockRepository stock,
         ILogger<PharmacyReader> log)
     {
         _inventory = inventory;
         _codes = codes;
+        _reports = reports;
+        _pos = pos;
+        _users = users;
         _items = items;
         _stock = stock;
         _log = log;
@@ -80,6 +90,35 @@ public sealed class PharmacyReader : IPharmacyReader
             .OrderBy(l => l.Coverage)
             .ThenBy(l => l.Item.DisplayName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    // ---------------- reports ----------------
+
+    public DailyReport Sales(int erpUserId, Period period)
+        => _reports.Range(User(erpUserId), period.FromInclusive, period.ToExclusive);
+
+    public IReadOnlyList<Sale> Invoices(Period period)
+        => _pos.SalesInRange(period.FromInclusive, period.ToExclusive);
+
+    public IReadOnlyList<BestSellerRow> BestSellers(int erpUserId, Period period, int limit)
+        => _reports.BestSellers(User(erpUserId), period.FromInclusive, period.ToExclusive, limit);
+
+    public IReadOnlyList<DeadStockRow> DeadStock(int erpUserId, int days)
+        => _reports.DeadStock(User(erpUserId), days);
+
+    /// <summary>
+    /// The real pharmacy account behind a Telegram link, loaded fresh.
+    ///
+    /// Handed to the ERP's report services so THEY decide what this person may see — BestSellers and
+    /// DeadStock refuse a non-administrator outright, and the sales figures include profit only for
+    /// one. The bot does not re-implement any of that, which means it cannot get it subtly wrong.
+    /// </summary>
+    private Dawaii.Core.Models.User User(int erpUserId)
+    {
+        Dawaii.Core.Models.User user = _users.GetById(erpUserId);
+        if (user == null)
+            throw new PermissionDeniedException("حساب دوائي المرتبط غير موجود.");
+        return user;
     }
 
     private StockDetail Detail(Item item)

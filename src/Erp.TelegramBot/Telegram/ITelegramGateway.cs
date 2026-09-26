@@ -58,6 +58,16 @@ public interface ITelegramGateway
         CancellationToken ct);
 
     /// <summary>
+    /// Sends a file.
+    ///
+    /// Straight from memory — no temp file is ever written. A background service that scattered
+    /// half-written CSVs into a temp folder would be leaving the pharmacy's trading figures on disk
+    /// for anyone with the PC, and would eventually fail on a full or read-only volume.
+    /// </summary>
+    Task SendDocumentAsync(long chatId, string fileName, byte[] content, string? caption,
+        CancellationToken ct);
+
+    /// <summary>
     /// Tells Telegram a button press was received. Without this the manager's client shows a
     /// spinner on the button until it times out, which reads as a broken bot.
     /// </summary>

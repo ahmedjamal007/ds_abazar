@@ -1,5 +1,7 @@
+using Dawaii.Core;
 using Dawaii.Core.Bot;
 using Dawaii.Core.Models;
+using Dawaii.Core.Services;
 using Erp.TelegramBot.Pharmacy;
 using Erp.TelegramBot.Reports;
 using Erp.TelegramBot.Telegram;
@@ -9,12 +11,21 @@ namespace Erp.TelegramBot.Commands;
 /// <summary>Who sent a command, as much as any handler needs to know.</summary>
 /// <param name="TelegramUserId">The numeric Telegram account. What authorization is decided on.</param>
 /// <param name="ChatId">Where to reply. Not the same as the sender in a group.</param>
-public readonly record struct Sender(long TelegramUserId, long ChatId);
+/// <param name="ErpUserId">
+/// The pharmacy account this Telegram id is linked to, or 0 when it is not linked. Handed to the
+/// ERP's own report services so THEY decide what this person may see — the bot does not
+/// re-implement any of those rules and so cannot get them subtly wrong.
+/// </param>
+public readonly record struct Sender(long TelegramUserId, long ChatId, int ErpUserId = 0);
 
-/// <summary>What to say back, and any buttons to put under it.</summary>
-public sealed record Reply(string Text, IReadOnlyList<Button>? Buttons = null)
+/// <summary>What to say back: text with optional buttons, or a file.</summary>
+public sealed record Reply(
+    string Text, IReadOnlyList<Button>? Buttons = null, OutgoingFile? File = null)
 {
     public static implicit operator Reply(string text) => new(text);
+
+    /// <summary>A file with a one-line caption.</summary>
+    public static Reply Document(OutgoingFile file, string caption) => new(caption, null, file);
 }
 
 /// <summary>
@@ -63,6 +74,8 @@ public sealed class CommandRouter
             "link" => Link(command, sender),
             "stock" => Stock(command),
             "low" => Low(0),
+            "sales" => Sales(command, sender),
+            "report" => Report(command, sender),
             _ => "أمر غير معروف: /" + command.Verb + "\nاكتب /help لعرض الأوامر.",
         };
     }
@@ -130,6 +143,120 @@ public sealed class CommandRouter
 
         return buttons.Count > 0 ? buttons : null;
     }
+
+    // ---------------- /sales ----------------
+
+    private Reply Sales(CommandLine command, Sender sender)
+    {
+        if (!Period.TryParse(command.FirstArg, DateTime.Now, out Period period))
+            return SalesReport.Usage;
+
+        try
+        {
+            return SalesReport.Summary(_pharmacy.Sales(sender.ErpUserId, period), period);
+        }
+        catch (DomainException ex)
+        {
+            // The ERP refused — a demoted account, most likely. Its message is the honest one.
+            return ex.Message;
+        }
+    }
+
+    // ---------------- /report ----------------
+
+    /// <summary>
+    /// Builds a report as a file.
+    ///
+    /// A file rather than a message because these outgrow 4096 characters immediately, and because a
+    /// CSV is the thing a manager can actually forward to an accountant. Built in memory and sent
+    /// straight from it.
+    /// </summary>
+    private Reply Report(CommandLine command, Sender sender)
+    {
+        string type = (command.FirstArg ?? "").Trim().ToLowerInvariant();
+        if (type.Length == 0) return ReportUsage;
+
+        try
+        {
+            switch (type)
+            {
+                case "sales":
+                {
+                    if (!Period.TryParse(command.Args.Length > 1 ? command.Args[1] : "today",
+                            DateTime.Now, out Period period))
+                        return ReportUsage;
+
+                    DailyReport totals = _pharmacy.Sales(sender.ErpUserId, period);
+                    IReadOnlyList<Sale> invoices = _pharmacy.Invoices(period);
+
+                    return Reply.Document(
+                        SalesReport.SalesCsv(totals, invoices, period),
+                        "تقرير المبيعات — " + period.Label + "\n" +
+                        invoices.Count + " فاتورة");
+                }
+
+                case "low":
+                {
+                    IReadOnlyList<LowStockLine> low = _pharmacy.LowStock();
+                    if (low.Count == 0) return "لا يوجد صنف عند حد الطلب أو أقل.";
+
+                    return Reply.Document(
+                        SalesReport.LowStockCsv(low, DateTime.Now),
+                        "تقرير المخزون المنخفض — " + low.Count + " صنف");
+                }
+
+                case "best":
+                {
+                    if (!Period.TryParse(command.Args.Length > 1 ? command.Args[1] : "month",
+                            DateTime.Now, out Period period))
+                        return ReportUsage;
+
+                    IReadOnlyList<BestSellerRow> rows = _pharmacy.BestSellers(sender.ErpUserId, period, 200);
+                    if (rows.Count == 0) return "لا مبيعات في هذه الفترة.";
+
+                    return Reply.Document(
+                        SalesReport.BestSellersCsv(rows, period),
+                        "الأكثر مبيعاً — " + period.Label);
+                }
+
+                case "dead":
+                {
+                    IReadOnlyList<DeadStockRow> rows = _pharmacy.DeadStock(sender.ErpUserId, DeadStockDays);
+                    if (rows.Count == 0)
+                        return "لا يوجد مخزون راكد خلال " + DeadStockDays + " يوم.";
+
+                    return Reply.Document(
+                        SalesReport.DeadStockCsv(rows, DeadStockDays, DateTime.Now),
+                        "المخزون الراكد — " + rows.Count + " صنف");
+                }
+
+                default:
+                    return ReportUsage;
+            }
+        }
+        catch (DomainException ex)
+        {
+            // Every report above is guarded by the ERP itself, and BestSellers and DeadStock refuse a
+            // non-administrator outright. Its wording is the truthful one, so it is passed through
+            // rather than replaced with something vaguer.
+            return ex.Message;
+        }
+    }
+
+    /// <summary>Days of no movement before stock counts as dead. The ERP's own default.</summary>
+    public const int DeadStockDays = 60;
+
+    private static string ReportUsage =>
+        "الاستخدام: /report ثم النوع ثم الفترة\n" +
+        "\n" +
+        "الأنواع:\n" +
+        "sales — المبيعات والفواتير\n" +
+        "low — المخزون المنخفض\n" +
+        "best — الأكثر مبيعاً\n" +
+        "dead — المخزون الراكد\n" +
+        "\n" +
+        "الفترات: " + Period.Accepted + "\n" +
+        "مثال: /report sales week";
 
     // ---------------- /link ----------------
 

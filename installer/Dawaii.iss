@@ -20,7 +20,7 @@
 ; =====================================================================
 
 #define AppName "Dawaii"
-#define AppVersion "2.7"
+#define AppVersion "2.8"
 #define ExeName "Dawaii.exe"
 #define AppBin "..\src\Dawaii.App\bin\Release\net48"
 #define DbDir "..\db"

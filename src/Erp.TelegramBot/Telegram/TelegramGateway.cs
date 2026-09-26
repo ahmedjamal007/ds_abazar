@@ -94,6 +94,19 @@ public sealed class TelegramGateway : ITelegramGateway
         }
     }
 
+    public async Task SendDocumentAsync(long chatId, string fileName, byte[] content,
+        string? caption, CancellationToken ct)
+    {
+        // The stream wraps the bytes already in memory and is disposed here; nothing touches disk.
+        using var stream = new MemoryStream(content, writable: false);
+
+        await _client.SendDocument(
+            chatId,
+            InputFile.FromStream(stream, fileName),
+            caption: caption,
+            cancellationToken: ct);
+    }
+
     public async Task AcknowledgeAsync(string callbackId, CancellationToken ct)
     {
         try

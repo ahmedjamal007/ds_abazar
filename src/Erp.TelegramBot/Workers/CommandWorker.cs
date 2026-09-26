@@ -130,8 +130,15 @@ public sealed class CommandWorker : BackgroundService
         CommandLine command = CommandLine.Parse(message.Text, _botUsername);
         if (!command.IsCommand) return;     // a sticker, or someone chatting
 
-        var sender = new Sender(message.TelegramUserId, message.ChatId);
         DateTimeOffset now = DateTimeOffset.Now;
+
+        // The linked pharmacy account travels with the command, so the ERP's own report services
+        // decide what this person may see. The bot does not re-implement those rules.
+        BotUser? linked = null;
+        try { linked = _bot.FindActive(message.TelegramUserId); }
+        catch (Exception ex) { _log.LogWarning(ex, "Could not read the link for a sender."); }
+
+        var sender = new Sender(message.TelegramUserId, message.ChatId, linked?.ErpUserId ?? 0);
 
         // ---- linking: the ONE thing a sender the bot does not know may do ----
         //
@@ -150,8 +157,7 @@ public sealed class CommandWorker : BackgroundService
 
             Reply? linkReply = _router.Handle(command, sender);
             Audit(message, command, success: true, note: "link attempt");
-            if (linkReply != null)
-                await _telegram.SendAsync(message.ChatId, linkReply.Text, linkReply.Buttons, ct);
+            if (linkReply != null) await SendAsync(message.ChatId, linkReply, ct);
             return;
         }
 
@@ -185,7 +191,18 @@ public sealed class CommandWorker : BackgroundService
         if (reply == null) return;
 
         _log.LogInformation("/{Verb} from {TelegramUserId}.", command.Verb, message.TelegramUserId);
-        await _telegram.SendAsync(message.ChatId, reply.Text, reply.Buttons, ct);
+        await SendAsync(message.ChatId, reply, ct);
+    }
+
+    /// <summary>Sends a reply, as a file when it carries one.</summary>
+    private async Task SendAsync(long chatId, Reply reply, CancellationToken ct)
+    {
+        if (reply.File is { } file)
+        {
+            await _telegram.SendDocumentAsync(chatId, file.Name, file.Bytes, reply.Text, ct);
+            return;
+        }
+        await _telegram.SendAsync(chatId, reply.Text, reply.Buttons, ct);
     }
 
     /// <summary>

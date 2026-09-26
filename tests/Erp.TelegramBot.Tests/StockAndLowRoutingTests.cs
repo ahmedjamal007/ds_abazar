@@ -18,31 +18,19 @@ namespace Erp.TelegramBot.Tests;
 [TestFixture]
 public class StockAndLowRoutingTests
 {
-    private sealed class FakePharmacy : IPharmacyReader
-    {
-        public StockDetail? One;
-        public List<Item> Matches = [];
-        public List<LowStockLine> Low = [];
-        public string? LastQuery;
-
-        public StockDetail? FindOne(string query) { LastQuery = query; return One; }
-        public IReadOnlyList<Item> FindMany(string query, int limit) => Matches;
-        public IReadOnlyList<LowStockLine> LowStock() => Low;
-    }
-
     private sealed class NoLinking : ILinkService
     {
         public LinkOutcome Redeem(string code, long telegramUserId, long chatId) => LinkOutcome.NoSuchCode;
     }
 
-    private FakePharmacy _pharmacy;
+    private TestPharmacy _pharmacy;
     private CommandRouter _router;
     private static readonly Sender Manager = new(111222333, 111222333);
 
     [SetUp]
     public void SetUp()
     {
-        _pharmacy = new FakePharmacy();
+        _pharmacy = new TestPharmacy();
         _router = new CommandRouter(new NoLinking(), _pharmacy);
     }
 

@@ -1,4 +1,5 @@
 using Dawaii.Core.Models;
+using Dawaii.Core.Services;
 
 namespace Erp.TelegramBot.Pharmacy;
 
@@ -47,6 +48,27 @@ public interface IPharmacyReader
     /// at 95 of 100, and a flat sort by remaining units would bury it under bulkier drugs.
     /// </summary>
     IReadOnlyList<LowStockLine> LowStock();
+
+    // ---------------- reports (phase 5) ----------------
+    //
+    // Each of these takes the ERP user id of the manager who asked, and every one passes it to the
+    // pharmacy's own service. That is not ceremony: ReportService.BestSellers and DeadStock REFUSE a
+    // non-administrator, and Range decides whether profit is included from the same user. So the
+    // bot's answers carry exactly the permissions of the real account behind the Telegram id, and a
+    // manager demoted between linking and asking gets refused by the ERP rather than by the bot
+    // remembering to check.
+
+    /// <summary>Takings, invoice count, returns and — for an administrator — profit.</summary>
+    DailyReport Sales(int erpUserId, Period period);
+
+    /// <summary>The individual invoices behind those totals, for the exported file.</summary>
+    IReadOnlyList<Sale> Invoices(Period period);
+
+    /// <summary>What sold most. Administrator only, enforced by the ERP.</summary>
+    IReadOnlyList<BestSellerRow> BestSellers(int erpUserId, Period period, int limit);
+
+    /// <summary>Stock that has not moved. Administrator only, enforced by the ERP.</summary>
+    IReadOnlyList<DeadStockRow> DeadStock(int erpUserId, int days);
 }
 
 /// <summary>A drug at or below its reorder level.</summary>

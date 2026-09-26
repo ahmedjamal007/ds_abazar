@@ -26,19 +26,9 @@ namespace Erp.TelegramBot.Tests;
 [TestFixture]
 public class LowStockAlertWorkerTests
 {
-    private sealed class FakePharmacy : IPharmacyReader
-    {
-        public List<LowStockLine> Low = [];
-        public int Reads;
-
-        public StockDetail? FindOne(string query) => null;
-        public IReadOnlyList<Item> FindMany(string query, int limit) => [];
-        public IReadOnlyList<LowStockLine> LowStock() { Reads++; return Low; }
-    }
-
     private string _path = "";
     private BotStore _bot = null!;
-    private FakePharmacy _pharmacy = null!;
+    private TestPharmacy _pharmacy = null!;
     private BotOptions _options = null!;
 
     /// <summary>9am on a Saturday. The digest hour defaults to 9.</summary>
@@ -51,7 +41,7 @@ public class LowStockAlertWorkerTests
         _bot = new BotStore(new SqliteConnectionFactory(_path));
         _bot.EnsureSchema();
 
-        _pharmacy = new FakePharmacy();
+        _pharmacy = new TestPharmacy();
         _options = new BotOptions { LowStockDigest = true, LowStockDigestHour = 9, LowStockDigestNames = 3 };
     }
 
@@ -172,7 +162,7 @@ public class LowStockAlertWorkerTests
         worker.Consider(Morning.AddMinutes(5));
         worker.Consider(Morning.AddMinutes(10));
 
-        Assert.That(_pharmacy.Reads, Is.EqualTo(1),
+        Assert.That(_pharmacy.LowReads, Is.EqualTo(1),
             "re-querying the pharmacy's database every five minutes to learn nothing is waste");
     }
 
@@ -185,7 +175,7 @@ public class LowStockAlertWorkerTests
         Worker().Consider(Morning);
 
         Assert.That(Queued(), Is.Empty, "a pharmacy that turned the digest off must not get one");
-        Assert.That(_pharmacy.Reads, Is.Zero, "and its database is not queried for it either");
+        Assert.That(_pharmacy.LowReads, Is.Zero, "and its database is not queried for it either");
     }
 
     // ---------------- what it says ----------------

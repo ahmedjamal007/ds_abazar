@@ -25,14 +25,6 @@ public class CommandRouterTests
         }
     }
 
-    /// <summary>A pharmacy with nothing in it — these tests are about routing, not about reports.</summary>
-    private sealed class EmptyPharmacy : IPharmacyReader
-    {
-        public StockDetail FindOne(string query) => null;
-        public IReadOnlyList<Item> FindMany(string query, int limit) => [];
-        public IReadOnlyList<LowStockLine> LowStock() => [];
-    }
-
     private FakeLinking _linking;
     private CommandRouter _router;
     private static readonly Sender Manager = new(111222333, 111222333);
@@ -41,7 +33,7 @@ public class CommandRouterTests
     public void SetUp()
     {
         _linking = new FakeLinking();
-        _router = new CommandRouter(_linking, new EmptyPharmacy());
+        _router = new CommandRouter(_linking, new TestPharmacy());
     }
 
     private string Reply(string text) => _router.Handle(CommandLine.Parse(text), Manager)?.Text;

@@ -130,6 +130,25 @@ public static class Program
             sp.GetRequiredService<IAuditRepository>(),
             sp.GetRequiredService<IItemCodeRepository>()));
 
+        // ReportService and PosService are what /sales and /report go through, so the permission
+        // rules the pharmacy already has — BestSellers and DeadStock refusing a non-administrator,
+        // profit shown only to one — apply to the bot's answers without being restated here.
+        builder.Services.AddSingleton<ISaleStore>(_ => new SqliteSaleStore(erpDb));
+        builder.Services.AddSingleton<IReportRepository>(_ => new SqliteReportRepository(erpDb));
+        builder.Services.AddSingleton<ICustomerRepository>(_ => new SqliteCustomerRepository(erpDb));
+
+        builder.Services.AddSingleton(sp => new ReportService(
+            sp.GetRequiredService<ISaleStore>(),
+            sp.GetRequiredService<IReportRepository>()));
+
+        builder.Services.AddSingleton(sp => new PosService(
+            sp.GetRequiredService<IItemRepository>(),
+            sp.GetRequiredService<IStockRepository>(),
+            sp.GetRequiredService<ISaleStore>(),
+            sp.GetRequiredService<ICustomerRepository>(),
+            sp.GetRequiredService<ISettingsRepository>(),
+            sp.GetRequiredService<IAuditRepository>()));
+
         builder.Services.AddSingleton(sp => new CodeService(
             sp.GetRequiredService<IItemCodeRepository>(),
             sp.GetRequiredService<IItemRepository>(),
