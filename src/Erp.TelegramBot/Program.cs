@@ -135,8 +135,6 @@ public static class Program
         // profit shown only to one — apply to the bot's answers without being restated here.
         builder.Services.AddSingleton<ISaleStore>(_ => new SqliteSaleStore(erpDb));
         builder.Services.AddSingleton<IReportRepository>(_ => new SqliteReportRepository(erpDb));
-        builder.Services.AddSingleton<ICustomerRepository>(_ => new SqliteCustomerRepository(erpDb));
-
         builder.Services.AddSingleton(sp => new ReportService(
             sp.GetRequiredService<ISaleStore>(),
             sp.GetRequiredService<IReportRepository>()));
@@ -154,6 +152,31 @@ public static class Program
             sp.GetRequiredService<IItemRepository>(),
             sp.GetRequiredService<IAuditRepository>()));
 
+        // Customers, suppliers and staff, for the owner's reports. Each service keeps its own
+        // permission rules, so the bot inherits them rather than restating them.
+        builder.Services.AddSingleton<ICustomerRepository>(_ => new SqliteCustomerRepository(erpDb));
+        builder.Services.AddSingleton<IDebtStore>(_ => new SqliteDebtStore(erpDb));
+        builder.Services.AddSingleton<ISupplierRepository>(_ => new SqliteSupplierRepository(erpDb));
+        builder.Services.AddSingleton<IEmployeeRepository>(_ => new SqliteEmployeeRepository(erpDb));
+
+        builder.Services.AddSingleton(sp => new EmployeeService(
+            sp.GetRequiredService<IEmployeeRepository>(),
+            sp.GetRequiredService<IUserRepository>(),
+            sp.GetRequiredService<IItemRepository>(),
+            sp.GetRequiredService<IStockRepository>(),
+            sp.GetRequiredService<ISaleStore>(),
+            sp.GetRequiredService<IAuditRepository>()));
+
+        builder.Services.AddSingleton(sp => new DebtService(
+            sp.GetRequiredService<ICustomerRepository>(),
+            sp.GetRequiredService<IDebtStore>(),
+            sp.GetRequiredService<IAuditRepository>()));
+
+        builder.Services.AddSingleton(sp => new SupplierService(
+            sp.GetRequiredService<ISupplierRepository>(),
+            sp.GetRequiredService<IItemRepository>(),
+            sp.GetRequiredService<IAuditRepository>()));
+
         builder.Services.AddSingleton<IPharmacyReader, PharmacyReader>();
 
         builder.Services.AddSingleton<ITelegramBotClient>(_ => new TelegramBotClient(token.Trim()));
@@ -167,7 +190,19 @@ public static class Program
             new CommandAuthorizer(sp.GetRequiredService<IAdminDirectory>(), options.RateLimitPerMinute));
         builder.Services.AddSingleton(_ => new LinkThrottle(options.LinkAttemptsPerMinute));
 
-        builder.Services.AddSingleton<CommandRouter>();
+        builder.Services.AddSingleton(sp =>
+        {
+            // The pharmacy's own name, from its settings, so the welcome greets the owner by their
+            // shop rather than by the software. Falls back if the setting was never filled in.
+            string name = "";
+            try { name = sp.GetRequiredService<ISettingsRepository>().Get("pharmacy_name") ?? ""; }
+            catch { }
+
+            return new CommandRouter(
+                sp.GetRequiredService<ILinkService>(),
+                sp.GetRequiredService<IPharmacyReader>(),
+                name);
+        });
         builder.Services.AddHostedService<CommandWorker>();
 
         // Two more hosted services in this same process, deliberately independent of the command

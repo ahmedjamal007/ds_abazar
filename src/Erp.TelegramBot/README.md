@@ -5,9 +5,11 @@ A Telegram bot that lets the **pharmacy manager** check stock and pull reports f
 Runs as a Windows Service on the pharmacy's own PC. It reaches out to Telegram; nothing reaches in.
 No public IP, no open ports, no domain name, no webhooks.
 
-**Phase 4 — this is what exists today.** The bot answers `/start`, `/help`, `/ping`, `/link`,
-`/stock` and `/low`, and sends a **daily low-stock digest** through a durable outbox. It reads the
-pharmacy's database and **never writes to it**.
+**V2.8 — this is what exists today.** A reporting layer over the pharmacy system, driven by an
+**Arabic menu** rather than by remembered commands: sales split by how the money actually arrived,
+sales per employee, shifts, purchases, customer and supplier debts, expiry, and a price lookup you
+reach by typing a drug name straight into the chat. Plus a **daily low-stock digest** through a
+durable outbox. It reads the pharmacy's database and **never writes to it**.
 
 ---
 
@@ -137,17 +139,66 @@ the same reason.
 end of a shift and the manager still wants to ask about stock. Closing Dawaii does not stop the bot,
 and restarting the PC starts it again on its own.
 
-## Commands
+## Using it
 
-| command | what it does |
-|---|---|
-| `/start`, `/help` | usage |
-| `/ping` | replies `pong` — proves the bot is alive |
-| `/link <code>` | binds this Telegram account to a Dawaii manager account |
-| `/stock <barcode or name>` | what is on the shelf, with the batch breakdown |
-| `/low` | everything at or below its reorder level, paged |
+**Type a drug name or scan a barcode straight into the chat.** No command. The price comes back in
+boxes, strips and tablets with what is on the shelf. `*` on its own sends the whole price list as a
+CSV. This is the thing the manager does twenty times a day, so it costs nothing to reach.
 
-Coming in later phases: `/sales`, `/report`.
+Everything else is on a **menu**, in Arabic, three screens deep at most:
+
+| التقارير | العملاء والموردون | البحث |
+|---|---|---|
+| مبيعات اليوم | مديونية العملاء | قائمة الأسعار كاملة |
+| مبيعات حسب الموظف | مديونية الموردين | المخزون المنخفض |
+| تقرير الورديات | قائمة العملاء | |
+| تقرير المشتريات | قائمة الموردين | |
+| المخزون المنخفض | | |
+| قرب الانتهاء | | |
+
+The typed commands still work and are faster once learned — `/menu`, `/stock <صنف>`, `/low`,
+`/sales today|week|month`, `/report`, `/ping`, `/link <code>` — but nobody has to know one. A manager
+who never reads the help can use the whole bot, which is the difference between a tool that gets
+opened and one that gets abandoned.
+
+Every screen has a way back. A menu you can get lost in on a phone is a menu people stop opening.
+
+### The reports
+
+**Sales are split by how the money arrived** — نقدي, بنكك, فوري, أوكاش, آجل — because "today: 45,000"
+is not an answer when the question is how much of it is actually in the drawer. The figures come from
+`ShiftReconciliation`, the same code the till's own shift close uses, so the numbers reconcile with
+the program rather than approximating it.
+
+**A channel with nothing in it still shows as 0.00.** A missing line reads as missing data; a zero
+reads as "none today", which is the answer.
+
+**Employees are named, never user-named.** A report about a person says علاء الأمين, not `alaa01`.
+The login name appears only when the account has no full name recorded, where it beats a blank.
+
+**Profit appears only where the ERP already shows it** to that account. The bot re-uses the pharmacy's
+own permission checks rather than reimplementing them, so a demoted account loses the figure here at
+the same moment it loses it on screen.
+
+**Lists are capped and say how many they cut**, every one of them — Telegram *refuses* a message over
+4096 characters rather than truncating it, so an uncapped report is not a long report, it is no report
+at all, and it fails first at the biggest pharmacy. A test holds every menu report against the limit
+with hundreds of rows behind it.
+
+### Shifts, and a limit stated rather than papered over
+
+The shift report gives sign-in time and **time of last transaction**. It does not give a leaving time,
+because **the system does not record one** — attendance stores a login and there is no logout anywhere
+in the schema. Every shift report therefore ends with a line saying so.
+
+This matters more than it looks: this report gets read by an owner deciding whether somebody left
+early. Presenting a last-sale time under a heading like "الانصراف" would be inventing evidence about
+an employee out of a gap in the data. An employee who signed in and sold nothing shows a dash.
+
+### Purchases name who entered them
+
+Each purchase shows the supplier, the representative, the total, and **which member of staff keyed it
+in and when** — which is the question actually being asked when an owner opens a purchase report.
 
 ## Alerts
 
@@ -215,7 +266,7 @@ install and there is no migration state to fall out of step.
 Five tables — `bot_user`, `bot_link_code`, `bot_outbox`, `bot_audit_log`, `bot_setting` — in a
 **separate database** from the pharmacy's. **The bot never opens the pharmacy's database for
 writing.** A 24/7 background service cannot lock or corrupt the one file the shop cannot lose. The
-cost, stated honestly: two files to back up, and an ERP-side writer for outbox rows in phase 4.
+cost, stated honestly: two files to back up, and an ERP-side writer for the outbox rows the desktop app queues.
 
 To apply it by hand:
 
@@ -257,7 +308,15 @@ dotnet test tests/Erp.TelegramBot.Tests
 dotnet test tests/Dawaii.Tests --framework net10.0-windows
 ```
 
-111 bot tests over the authorization gate, both rate limiters, the command parser, the backoff
-curve, the paging arithmetic, the digest's restraint and every reply; plus 61 in the ERP suite over
-link codes, the outbox lifecycle, token sealing, machine-secret purposes and the box/strip division. No token and no network needed: everything Telegram-specific sits behind one interface
+178 bot tests over the authorization gate, both rate limiters, the command parser, the backoff
+curve, the paging arithmetic, the digest's restraint, the menu, and every report — that the payment
+split is complete including its zeroes, that employees are named and not user-named, that a shift's
+end time is never invented, and that no report can outgrow one Telegram message. The polling loop is
+driven end to end through a fake Telegram, because the ORDER those checks run in is the security
+property and no unit test underneath it would notice a price lookup that answered before asking who
+was asking. Plus 68 in the ERP
+suite over link codes, the outbox lifecycle, token sealing, machine-secret purposes and the
+box/strip division.
+
+No token and no network needed: everything Telegram-specific sits behind one interface
 (`ITelegramGateway`), and only `TelegramGateway.cs` references the client library.

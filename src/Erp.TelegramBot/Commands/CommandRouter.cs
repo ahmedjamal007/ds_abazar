@@ -48,11 +48,13 @@ public sealed class CommandRouter
 
     private readonly ILinkService _linking;
     private readonly IPharmacyReader _pharmacy;
+    private readonly string _pharmacyName;
 
-    public CommandRouter(ILinkService linking, IPharmacyReader pharmacy)
+    public CommandRouter(ILinkService linking, IPharmacyReader pharmacy, string? pharmacyName = null)
     {
         _linking = linking;
         _pharmacy = pharmacy;
+        _pharmacyName = string.IsNullOrWhiteSpace(pharmacyName) ? "دوائي" : pharmacyName.Trim();
     }
 
     /// <summary>
@@ -63,13 +65,43 @@ public sealed class CommandRouter
     /// </summary>
     public static bool IsOpenToStrangers(string verb) => verb == "link";
 
+    /// <summary>
+    /// A message that is NOT a command.
+    ///
+    /// For a linked owner this is the fastest path in the whole bot: type a drug name or scan a
+    /// barcode straight into the chat and get the price back, with no command to remember. "*" asks
+    /// for the whole price list, which has to be a file — hundreds of drugs will not fit in a message.
+    ///
+    /// Returns null for anybody the bot does not know, so a stranger messaging it still gets silence.
+    /// </summary>
+    public Reply? HandleText(string? text, Sender sender)
+    {
+        string term = (text ?? "").Trim();
+        if (term.Length == 0) return null;
+
+        if (term == "*") return FullPriceList();
+
+        // Two characters is not a search, it is a typo — and matching on it would return half the
+        // catalogue and look broken.
+        if (term.Length < 2) return null;
+
+        IReadOnlyList<PriceLine> matches = _pharmacy.Prices(term, PharmacyReader.SearchLimit);
+
+        if (matches.Count == 0) return new Reply(OwnerReports.PriceNotFound(term), Menu.BackTo(Menu.Search));
+        if (matches.Count == 1) return new Reply(OwnerReports.Price(matches[0]), Menu.BackTo(Menu.Search));
+
+        return new Reply(OwnerReports.PriceMatches(term, matches, ListPreview), Menu.BackTo(Menu.Search));
+    }
+
     public Reply? Handle(CommandLine command, Sender sender)
     {
         if (!command.IsCommand) return null;      // ordinary chatter is not an error
 
         return command.Verb switch
         {
-            "start" or "help" => Help,
+            "start" => Menu.Welcome(_pharmacyName),
+            "menu" => Menu.MainMenu(),
+            "help" => Menu.Help(),
             "ping" => "pong",
             "link" => Link(command, sender),
             "stock" => Stock(command),
@@ -88,15 +120,128 @@ public sealed class CommandRouter
     /// encodes is a page number, and the list is re-read fresh for the caller, the worst a forged
     /// value can do is show a page of the same manager's own low-stock list.
     /// </summary>
-    public Reply? HandlePress(string callbackData)
+    public Reply? HandlePress(string callbackData, Sender sender = default)
     {
-        if (callbackData is null || !callbackData.StartsWith(LowPagePrefix, StringComparison.Ordinal))
-            return null;
+        if (callbackData is null) return null;
 
-        string raw = callbackData[LowPagePrefix.Length..];
-        if (!int.TryParse(raw, out int page)) return null;
+        if (callbackData.StartsWith(LowPagePrefix, StringComparison.Ordinal))
+        {
+            string raw = callbackData[LowPagePrefix.Length..];
+            return int.TryParse(raw, out int page) ? Low(page) : null;
+        }
 
-        return Low(page);
+        if (!Menu.Owns(callbackData)) return null;
+
+        try
+        {
+            return callbackData switch
+            {
+                Menu.Main => Menu.MainMenu(),
+                Menu.Reports => Menu.ReportsMenu(),
+                Menu.People => Menu.PeopleMenu(),
+                Menu.Search => Menu.SearchMenu(),
+                "m:help" => Menu.Help(),
+
+                Menu.SalesToday => Screen(Menu.Reports,
+                    OwnerReports.Takings(_pharmacy.Takings(sender.ErpUserId, Today), Today)),
+
+                Menu.SalesByEmployee => Screen(Menu.Reports,
+                    OwnerReports.ByEmployee(_pharmacy.TakingsByEmployee(sender.ErpUserId, Today), Today, ListPreview)),
+
+                Menu.Shifts => Screen(Menu.Reports,
+                    OwnerReports.Shifts(_pharmacy.Shifts(sender.ErpUserId, DateTime.Today), DateTime.Today, ListPreview)),
+
+                Menu.Purchases => Screen(Menu.Reports, OwnerReports.Purchases(
+                    _pharmacy.Purchases(sender.ErpUserId, ThisMonth), ThisMonth, ListPreview)),
+
+                Menu.Expiring => Screen(Menu.Reports,
+                    OwnerReports.Expiring(_pharmacy.Expiring(), ListPreview)),
+
+                Menu.LowStock => Low(0),
+
+                Menu.CustomerDebt => Screen(Menu.People, OwnerReports.CustomerDebts(
+                    _pharmacy.CustomersInDebt(), _pharmacy.CustomerDebtTotal(), ListPreview)),
+
+                Menu.SupplierDebt => Screen(Menu.People, OwnerReports.SupplierDebts(
+                    _pharmacy.SuppliersOwed(), _pharmacy.SupplierDebtTotal(), ListPreview)),
+
+                Menu.Customers => Screen(Menu.People,
+                    OwnerReports.Customers(_pharmacy.FindCustomers(""), ListPreview)),
+
+                Menu.Suppliers => Screen(Menu.People,
+                    OwnerReports.Suppliers(_pharmacy.SuppliersOwed(), ListPreview)),
+
+                Menu.PriceList => FullPriceList(),
+
+                _ => null,
+            };
+        }
+        catch (DomainException ex)
+        {
+            // The ERP refused — a demoted account, most likely. Its wording is the truthful one.
+            return new Reply(ex.Message, Menu.BackTo(Menu.Main));
+        }
+    }
+
+    /// <summary>A report with a way back under it. Every screen has one; a phone has no back button.</summary>
+    private static Reply Screen(string parent, string body) => new(body, Menu.BackTo(parent));
+
+    /// <summary>
+    /// The whole price list.
+    ///
+    /// A file, not a message: a pharmacy carries hundreds of drugs and Telegram refuses anything over
+    /// 4096 characters. The count goes in the caption so the owner sees an answer immediately rather
+    /// than only a download.
+    /// </summary>
+    private Reply FullPriceList()
+    {
+        IReadOnlyList<PriceLine> all = _pharmacy.AllPrices();
+        if (all.Count == 0)
+            return new Reply("لا توجد أصناف مسعّرة.", Menu.BackTo(Menu.Search));
+
+        return new Reply(
+            "💰 قائمة الأسعار — " + all.Count + " صنف",
+            Menu.BackTo(Menu.Search),
+            PriceListCsv(all));
+    }
+
+    private static OutgoingFile PriceListCsv(IReadOnlyList<PriceLine> all)
+    {
+        var section = new CsvSection
+        {
+            Heading = "قائمة الأسعار",
+            Columns =
+            [
+                "الصنف", "الاسم العلمي",
+                "سعر العلبة", "سعر الشريط",
+                "سعر الحبة", "المتوفر (حبة)"
+            ]
+        };
+
+        foreach (PriceLine p in all)
+            section.Add(
+                p.Item.DisplayName,
+                p.Item.GenericName ?? "",
+                p.Unpriced ? "" : ReportFile.Money(p.BoxPrice),
+                p.Unpriced ? "" : ReportFile.Money(p.StripPrice),
+                p.Unpriced ? "" : ReportFile.Money(p.UnitPrice),
+                ReportFile.Int(p.AvailableUnits));
+
+        return ReportFile.Csv("prices_" + ReportFile.Date(DateTime.Now) + ".csv",
+            "قائمة أسعار الأصناف", [section]);
+    }
+
+    /// <summary>How many rows a menu report shows before saying "and N others".</summary>
+    private const int ListPreview = 15;
+
+    private static Period Today
+    {
+        get { Period.TryParse("today", DateTime.Now, out Period p); return p; }
+    }
+
+    private static Period ThisMonth
+    {
+        get { Period.TryParse("month", DateTime.Now, out Period p); return p; }
     }
 
     // ---------------- /stock ----------------

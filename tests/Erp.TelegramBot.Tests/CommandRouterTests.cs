@@ -46,19 +46,27 @@ public class CommandRouterTests
         Assert.That(Reply("/ping"), Is.EqualTo("pong"));
     }
 
-    [TestCase("/start")]
-    [TestCase("/help")]
-    public void StartAndHelp_BothExplainTheBot(string text)
+    [Test]
+    public void Start_WelcomesAndOffersTheMenu()
     {
-        string reply = Reply(text);
+        // The first thing an owner ever sees. It says what this is and — importantly — that it
+        // cannot change anything, because a bot wired into the pharmacy's books should say so.
+        Reply? reply = _router.Handle(CommandLine.Parse("/start"), Manager);
 
-        Assert.That(reply, Is.Not.Null);
-        Assert.That(reply, Does.Contain("/ping"));
-        Assert.That(reply, Does.Contain("/link"));
-        Assert.That(reply, Does.Contain("/stock"));
-        Assert.That(reply, Does.Contain("/low"));
-        Assert.That(reply, Does.Contain("للمدير"),
-            "the help must say plainly that this is for the manager only");
+        Assert.That(reply!.Text, Does.Contain("دوائي"));
+        Assert.That(reply.Text, Does.Contain("للاطّلاع فقط"), "read-only, stated up front");
+        Assert.That(reply.Buttons, Is.Not.Null.And.Not.Empty, "and a way in that needs no commands");
+    }
+
+    [Test]
+    public void Help_ListsTheShortcutsAndOffersAWayBack()
+    {
+        Reply? reply = _router.Handle(CommandLine.Parse("/help"), Manager);
+
+        Assert.That(reply!.Text, Does.Contain("/stock"));
+        Assert.That(reply.Text, Does.Contain("/low"));
+        Assert.That(reply.Text, Does.Contain("/menu"));
+        Assert.That(reply.Buttons, Is.Not.Null.And.Not.Empty);
     }
 
     [Test]

@@ -23,6 +23,9 @@ public sealed class PharmacyReader : IPharmacyReader
     private readonly CodeService _codes;
     private readonly ReportService _reports;
     private readonly PosService _pos;
+    private readonly EmployeeService _employees;
+    private readonly DebtService _debts;
+    private readonly SupplierService _suppliers;
     private readonly IUserRepository _users;
     private readonly IItemRepository _items;
     private readonly IStockRepository _stock;
@@ -36,6 +39,9 @@ public sealed class PharmacyReader : IPharmacyReader
         CodeService codes,
         ReportService reports,
         PosService pos,
+        EmployeeService employees,
+        DebtService debts,
+        SupplierService suppliers,
         IUserRepository users,
         IItemRepository items,
         IStockRepository stock,
@@ -45,6 +51,9 @@ public sealed class PharmacyReader : IPharmacyReader
         _codes = codes;
         _reports = reports;
         _pos = pos;
+        _employees = employees;
+        _debts = debts;
+        _suppliers = suppliers;
         _users = users;
         _items = items;
         _stock = stock;
@@ -105,6 +114,139 @@ public sealed class PharmacyReader : IPharmacyReader
 
     public IReadOnlyList<DeadStockRow> DeadStock(int erpUserId, int days)
         => _reports.DeadStock(User(erpUserId), days);
+
+    // ---------------- the owner's remote assistant ----------------
+
+    public TakingsLine Takings(int erpUserId, Period period)
+    {
+        Dawaii.Core.Models.User actor = User(erpUserId);
+        DailyReport totals = _reports.Range(actor, period.FromInclusive, period.ToExclusive);
+
+        // The payment split comes from the pharmacy's OWN reconciliation — the same code behind the
+        // shift screen — so Cash/Bankak/Fawry/OCash on a phone are the figures on the manager's
+        // monitor. DailyReport only knows cash-versus-credit and would have been the wrong source.
+        ShiftTill till = ShiftReconciliation.Build(
+            _pos.SalesInRange(period.FromInclusive, period.ToExclusive),
+            employees: null, purchases: 0m, supplierCash: 0m);
+
+        return new TakingsLine(till, totals.CreditTotal, totals.TransactionCount,
+            totals.ReturnedCount, totals.ReturnedTotal, totals.ProfitVisible, totals.TotalProfit);
+    }
+
+    public IReadOnlyList<EmployeeTakings> TakingsByEmployee(int erpUserId, Period period)
+    {
+        Dawaii.Core.Models.User actor = User(erpUserId);
+
+        // RangeReport enforces its own permission and is the Admin module's own grouping, so the
+        // employee list here is the employee list there.
+        IReadOnlyList<EmployeeDayRow> staff =
+            _employees.RangeReport(actor, period.FromInclusive, period.ToExclusive);
+
+        List<Sale> sales = _pos.SalesInRange(period.FromInclusive, period.ToExclusive).ToList();
+        var result = new List<EmployeeTakings>();
+
+        foreach (EmployeeDayRow row in staff)
+        {
+            List<Sale> theirs = sales.Where(s => s.UserId == row.User.Id).ToList();
+            if (theirs.Count == 0 && row.SalesCount == 0) continue;   // nothing to report
+
+            ShiftTill till = ShiftReconciliation.Build(theirs, null, 0m, 0m);
+            decimal credit = theirs
+                .Where(s => s.SaleType == SaleType.Credit && s.Status != SaleStatus.Returned)
+                .Sum(s => s.NetTotal);
+
+            result.Add(new EmployeeTakings(row.User, new TakingsLine(
+                till, credit, theirs.Count,
+                theirs.Count(s => s.ReturnedTotal > 0 || s.Status == SaleStatus.Returned),
+                theirs.Sum(s => s.RefundedTotal),
+                ProfitVisible: false, Profit: 0m)));
+        }
+
+        return result.OrderByDescending(e => e.Takings.GrandTotal).ToList();
+    }
+
+    public IReadOnlyList<ShiftLine> Shifts(int erpUserId, DateTime day)
+    {
+        Dawaii.Core.Models.User actor = User(erpUserId);
+        DateTime from = day.Date, to = day.Date.AddDays(1);
+
+        IReadOnlyList<EmployeeDayRow> staff = _employees.RangeReport(actor, from, to);
+        List<Sale> sales = _pos.SalesInRange(from, to).ToList();
+
+        var result = new List<ShiftLine>();
+        foreach (EmployeeDayRow row in staff)
+        {
+            List<Sale> theirs = sales.Where(s => s.UserId == row.User.Id).ToList();
+
+            // Somebody who neither signed in nor sold anything did not work that day.
+            if (row.FirstLoginAt == null && theirs.Count == 0) continue;
+
+            result.Add(new ShiftLine(
+                row.User,
+                day.Date,
+                row.FirstLoginAt,
+                // NOT a logout — the schema has none. The last sale is the closest honest thing.
+                theirs.Count > 0 ? theirs.Max(s => s.CreatedAt) : (DateTime?)null,
+                ShiftReconciliation.Build(theirs, null, 0m, 0m),
+                theirs.Count,
+                row.MoneyExpenses));
+        }
+
+        return result.OrderBy(s => s.FirstLoginAt ?? DateTime.MaxValue).ToList();
+    }
+
+    public IReadOnlyList<Customer> CustomersInDebt()
+        => _debts.WithDebt().OrderByDescending(c => c.Balance).ToList();
+
+    public decimal CustomerDebtTotal() => _debts.TotalOutstanding();
+
+    public IReadOnlyList<StatementRow> CustomerStatement(int customerId)
+        => _debts.GetStatement(customerId);
+
+    public IReadOnlyList<Customer> FindCustomers(string term) => _debts.Search(term ?? "");
+
+    public IReadOnlyList<Supplier> SuppliersOwed()
+        => _suppliers.WithOutstanding().OrderByDescending(s => s.Outstanding).ToList();
+
+    public decimal SupplierDebtTotal() => _suppliers.TotalOutstanding();
+
+    public IReadOnlyList<PurchaseLine> Purchases(int erpUserId, Period period)
+        => _suppliers.OrdersInRange(User(erpUserId), period.FromInclusive, period.ToExclusive)
+            .OrderByDescending(i => i.InvoiceDate)
+            .Select(i => new PurchaseLine(i))
+            .ToList();
+
+    public IReadOnlyList<NearExpiryRow> Expiring(int? windowDays = null)
+        => _inventory.GetNearExpiry(windowDays);
+
+    public IReadOnlyList<PriceLine> Prices(string term, int limit)
+    {
+        string wanted = (term ?? "").Trim();
+        if (wanted.Length == 0) return [];
+
+        // Barcode first, same as /stock: a code read off a box means that drug.
+        Item byCode = _codes.ResolveItem(wanted);
+        if (byCode != null)
+            return [new PriceLine(byCode, Available(byCode.Id))];
+
+        return _inventory.Search(wanted, Math.Max(1, limit))
+            .Select(v => new PriceLine(v.Item, v.AvailableUnits))
+            .ToList();
+    }
+
+    public IReadOnlyList<PriceLine> AllPrices()
+        // Search with an empty term is the catalogue; the ERP caps it, and unpriced drugs are kept
+        // so the owner can see WHICH ones still need a price rather than silently missing them.
+        => _inventory.Search("", int.MaxValue)
+            .Select(v => new PriceLine(v.Item, v.AvailableUnits))
+            .OrderBy(p => p.Item.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private int Available(int itemId)
+    {
+        try { return _inventory.GetView(itemId)?.AvailableUnits ?? 0; }
+        catch { return 0; }
+    }
 
     /// <summary>
     /// The real pharmacy account behind a Telegram link, loaded fresh.

@@ -69,6 +69,56 @@ public interface IPharmacyReader
 
     /// <summary>Stock that has not moved. Administrator only, enforced by the ERP.</summary>
     IReadOnlyList<DeadStockRow> DeadStock(int erpUserId, int days);
+
+    // ---------------- the owner's remote assistant (V2.8) ----------------
+    //
+    // Everything below is a read of something the Admin module already calculates. Not one figure is
+    // worked out here: the payment split comes from ShiftReconciliation, prices from UnitConverter,
+    // debts from the customer and supplier services, expiry from InventoryService. The bot is a way
+    // of ASKING the pharmacy, not a second opinion about it — a number on the owner's phone that
+    // disagreed with the number on the screen would be worse than no number.
+
+    /// <summary>Takings for a period, split by how the money actually arrived.</summary>
+    TakingsLine Takings(int erpUserId, Period period);
+
+    /// <summary>The same breakdown, per employee, named by full name.</summary>
+    IReadOnlyList<EmployeeTakings> TakingsByEmployee(int erpUserId, Period period);
+
+    /// <summary>
+    /// Who worked a day: sign-in, last sale, and what they took. One row per employee who either
+    /// signed in or sold something.
+    /// </summary>
+    IReadOnlyList<ShiftLine> Shifts(int erpUserId, DateTime day);
+
+    /// <summary>Customers carrying a balance, largest first.</summary>
+    IReadOnlyList<Customer> CustomersInDebt();
+
+    /// <summary>Everything the pharmacy is owed by customers.</summary>
+    decimal CustomerDebtTotal();
+
+    /// <summary>A customer's ledger, newest first.</summary>
+    IReadOnlyList<StatementRow> CustomerStatement(int customerId);
+
+    /// <summary>Find a customer by name or phone.</summary>
+    IReadOnlyList<Customer> FindCustomers(string term);
+
+    /// <summary>Companies still owed money, largest first.</summary>
+    IReadOnlyList<Supplier> SuppliersOwed();
+
+    /// <summary>Everything the pharmacy owes its suppliers.</summary>
+    decimal SupplierDebtTotal();
+
+    /// <summary>Deliveries in a period, with who entered each. Administrator only.</summary>
+    IReadOnlyList<PurchaseLine> Purchases(int erpUserId, Period period);
+
+    /// <summary>Batches at or past their expiry warning window, soonest first.</summary>
+    IReadOnlyList<NearExpiryRow> Expiring(int? windowDays = null);
+
+    /// <summary>Price lookup by barcode, then by name.</summary>
+    IReadOnlyList<PriceLine> Prices(string term, int limit);
+
+    /// <summary>Every priced, active drug — for the full price list.</summary>
+    IReadOnlyList<PriceLine> AllPrices();
 }
 
 /// <summary>A drug at or below its reorder level.</summary>

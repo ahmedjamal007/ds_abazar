@@ -70,4 +70,67 @@ internal sealed class TestPharmacy : IPharmacyReader
         if (Refuse != null) throw Refuse;
         return Dead;
     }
+
+    // ---------------- the owner's reports ----------------
+
+    public TakingsLine TakingsLine = new(new ShiftTill(), 0m, 0, 0, 0m, false, 0m);
+    public List<EmployeeTakings> ByEmployee = [];
+    public List<ShiftLine> ShiftRows = [];
+    public List<Customer> Debtors = [];
+    public decimal CustomerTotal;
+    public List<StatementRow> Statement = [];
+    public List<Customer> CustomerList = [];
+    public List<Supplier> SupplierRows = [];
+    public decimal SupplierTotal;
+    public List<PurchaseLine> PurchaseRows = [];
+    public List<NearExpiryRow> ExpiringRows = [];
+    public List<PriceLine> PriceRows = [];
+    public List<PriceLine> AllPriceRows = [];
+    public string? LastPriceTerm;
+
+    public TakingsLine Takings(int erpUserId, Period period)
+    {
+        ErpUserIdSeen = erpUserId;
+        if (Refuse != null) throw Refuse;
+        return TakingsLine;
+    }
+
+    public IReadOnlyList<EmployeeTakings> TakingsByEmployee(int erpUserId, Period period)
+    {
+        ErpUserIdSeen = erpUserId;
+        if (Refuse != null) throw Refuse;
+        return ByEmployee;
+    }
+
+    public IReadOnlyList<ShiftLine> Shifts(int erpUserId, DateTime day)
+    {
+        ErpUserIdSeen = erpUserId;
+        if (Refuse != null) throw Refuse;
+        return ShiftRows;
+    }
+
+    public IReadOnlyList<Customer> CustomersInDebt() => Debtors;
+    public decimal CustomerDebtTotal() => CustomerTotal;
+    public IReadOnlyList<StatementRow> CustomerStatement(int customerId) => Statement;
+    public IReadOnlyList<Customer> FindCustomers(string term) => CustomerList;
+
+    public IReadOnlyList<Supplier> SuppliersOwed() => SupplierRows;
+    public decimal SupplierDebtTotal() => SupplierTotal;
+
+    public IReadOnlyList<PurchaseLine> Purchases(int erpUserId, Period period)
+    {
+        ErpUserIdSeen = erpUserId;
+        if (Refuse != null) throw Refuse;
+        return PurchaseRows;
+    }
+
+    public IReadOnlyList<NearExpiryRow> Expiring(int? windowDays = null) => ExpiringRows;
+
+    public IReadOnlyList<PriceLine> Prices(string term, int limit)
+    {
+        LastPriceTerm = term;
+        return PriceRows;
+    }
+
+    public IReadOnlyList<PriceLine> AllPrices() => AllPriceRows;
 }

@@ -125,7 +125,14 @@ public sealed class TelegramGateway : ITelegramGateway
     {
         if (buttons is null || buttons.Count == 0) return null;
 
-        return new InlineKeyboardMarkup(
-            buttons.Select(b => InlineKeyboardButton.WithCallbackData(b.Label, b.Data)));
+        // Two to a row. One per row wastes a phone screen on a menu this size; three across
+        // truncates Arabic labels, which is worse than scrolling.
+        var rows = buttons
+            .Select((b, i) => (Button: b, Index: i))
+            .GroupBy(x => x.Index / 2)
+            .Select(g => g.Select(x =>
+                InlineKeyboardButton.WithCallbackData(x.Button.Label, x.Button.Data)));
+
+        return new InlineKeyboardMarkup(rows);
     }
 }

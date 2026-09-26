@@ -128,7 +128,6 @@ public sealed class CommandWorker : BackgroundService
         }
 
         CommandLine command = CommandLine.Parse(message.Text, _botUsername);
-        if (!command.IsCommand) return;     // a sticker, or someone chatting
 
         DateTimeOffset now = DateTimeOffset.Now;
 
@@ -145,7 +144,8 @@ public sealed class CommandWorker : BackgroundService
         // It has to be, because it is how a manager becomes known. It is therefore also the only
         // place a stranger can make the bot work, and the only place a six-digit code can be guessed
         // at — hence a throttle of its own, global so that a flood cannot grow any per-sender state.
-        if (CommandRouter.IsOpenToStrangers(command.Verb) && !_authorizer.IsKnown(message.TelegramUserId))
+        if (command.IsCommand && CommandRouter.IsOpenToStrangers(command.Verb)
+            && !_authorizer.IsKnown(message.TelegramUserId))
         {
             if (!_linkThrottle.Allow(now))
             {
@@ -162,6 +162,36 @@ public sealed class CommandWorker : BackgroundService
         }
 
         Access access = _authorizer.Check(message.TelegramUserId, now);
+
+        // Plain text from a linked owner is a price lookup — the fastest thing in the bot. Checked
+        // AFTER authorization, so a stranger typing a drug name still gets silence.
+        if (!command.IsCommand)
+        {
+            // Silence for a stranger, but not for the owner: somebody who has tripped the limit
+            // typing drug names gets the same explanation they would get from a command. Dropping it
+            // silently would read as a broken bot, and they would keep typing into it.
+            if (access == Access.Denied)
+            {
+                Audit(message, command, success: false, note: "not an authorized administrator");
+                return;
+            }
+
+            if (access == Access.RateLimited)
+            {
+                Audit(message, command, success: false, note: "rate limited");
+                await _telegram.SendAsync(message.ChatId,
+                    "أوامر كثيرة في وقت قصير. انتظر دقيقة ثم أعد المحاولة.", null, ct);
+                return;
+            }
+
+            Reply? priced = _router.HandleText(message.Text, sender);
+            if (priced == null) return;     // a sticker, or one stray character
+
+            Audit(message, command, success: true, note: "price lookup");
+            TouchSeen(message.TelegramUserId);
+            await SendAsync(message.ChatId, priced, ct);
+            return;
+        }
 
         if (access == Access.Denied)
         {
@@ -225,7 +255,12 @@ public sealed class CommandWorker : BackgroundService
             return;
         }
 
-        Reply? reply = _router.HandlePress(press.Data);
+        BotUser? linked = null;
+        try { linked = _bot.FindActive(message.TelegramUserId); }
+        catch (Exception ex) { _log.LogWarning(ex, "Could not read the link for a button press."); }
+
+        Reply? reply = _router.HandlePress(
+            press.Data, new Sender(message.TelegramUserId, message.ChatId, linked?.ErpUserId ?? 0));
         AuditPress(message, press, success: reply != null, note: reply == null ? "unknown button" : null);
         if (reply == null) return;
 
