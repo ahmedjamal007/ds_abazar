@@ -106,9 +106,23 @@ If it stays silent, read the console: every refused message is logged with the s
 
 ## 5. Install as a Windows Service
 
+**Normally you do not.** The Dawaii installer does it: tick **مساعد تيليجرام** during setup and it
+registers the service, points it at this pharmacy's database, and starts it. Skip to section 6.
+
+The rest of this section is for a hand install, or for a developer's machine.
+
+The bot is published **self-contained**, deliberately. It is a .NET 10 worker while the program is
+still .NET Framework 4.8, so a pharmacy PC has no .NET 10 runtime on it and generally no internet to
+fetch one. A framework-dependent build installs cleanly and then fails at service start — the worst
+of both, because it looks installed and answers nobody.
+
 ```
-dotnet publish src/Erp.TelegramBot -c Release -o C:\Dawaii\bot
+rm -rf dist/bot
+dotnet publish src/Erp.TelegramBot -c Release -r win-x64 --self-contained true -o dist/bot
 ```
+
+Delete the folder first. `dotnet publish -o` does not clean, and anything left behind from a previous
+run is packaged into the installer and shipped to every pharmacy.
 
 Then from an **Administrator** terminal:
 
@@ -118,7 +132,13 @@ sc.exe description DawaiiTelegramBot "Dawaii pharmacy — Telegram bot for the m
 sc.exe start DawaiiTelegramBot
 ```
 
-The spaces after `binPath=` and `start=` are required by `sc.exe`. Quote the path. To remove it:
+The spaces after `binPath=` and `start=` are required by `sc.exe`. Quote the path.
+
+**Set `ErpDirectory` before starting it** (section 3). A hand-installed bot sits in its own folder and
+cannot guess where the pharmacy's `dawaii.ini` is, and pointed at the wrong database it does not fail
+— it reports cheerfully empty stock. The installer writes this setting for you.
+
+To remove it:
 
 ```
 sc.exe stop DawaiiTelegramBot

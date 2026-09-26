@@ -1,17 +1,17 @@
 ﻿; =====================================================================
-;  Ø¯ÙˆØ§Ø¦ÙŠ (Dawaii) â€” Inno Setup installer (V1.2)
+;  دوائي (Dawaii) — Inno Setup installer (V1.2)
 ;  Asks how this PC will be used:
-;    1) ÙƒÙ…Ø¨ÙŠÙˆØªØ± ÙˆØ§Ø­Ø¯ (single)   -> local SQLite, zero setup (default)
-;    2) Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± (manager)   -> shared MySQL database on this PC (network mode, req 6)
-;    3) Ø¬Ù‡Ø§Ø² ÙƒØ§Ø´ÙŠØ± (counter)    -> connects to the manager's MySQL over the LAN
+;    1) كمبيوتر واحد (single)   -> local SQLite, zero setup (default)
+;    2) جهاز المدير (manager)   -> shared MySQL database on this PC (network mode, req 6)
+;    3) جهاز كاشير (counter)    -> connects to the manager's MySQL over the LAN
 ;
 ;  ...then what to start from:
-;    1) ØªØ±Ù‚ÙŠØ©        -> keep the data already on this PC (default when a database is found)
-;    2) ØµÙŠØ¯Ù„ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø© -> start empty; the app seeds its demo catalogue on first run
-;    3) ØµÙŠØ¯Ù„ÙŠØ© Ø­Ø§Ù„ÙŠØ© -> import the pharmacy's backup (.db for single, .sql dump for manager).
+;    1) ترقية        -> keep the data already on this PC (default when a database is found)
+;    2) صيدلية جديدة -> start empty; the app seeds its demo catalogue on first run
+;    3) صيدلية حالية -> import the pharmacy's backup (.db for single, .sql dump for manager).
 ;                       The app reshapes it to the current schema the first time it starts.
 ;  Nothing is ever deleted: any database already on the PC is renamed aside, not overwritten.
-;  (On a manager device "ØµÙŠØ¯Ù„ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø©" does not erase an existing MySQL `dawaii` database â€” this
+;  (On a manager device "صيدلية جديدة" does not erase an existing MySQL `dawaii` database — this
 ;   installer never drops one. Drop it by hand first if a manager PC is being reused.)
 ;
 ;  Build the app first (Release), then compile with Inno Setup 6:
@@ -24,6 +24,18 @@
 #define ExeName "Dawaii.exe"
 #define AppBin "..\src\Dawaii.App\bin\Release\net48"
 #define DbDir "..\db"
+
+; The Telegram bot: a SEPARATE Windows Service, not part of the program. The till gets closed at the
+; end of a shift and the owner still wants to ask about stock from their phone.
+;
+; Published SELF-CONTAINED: this is a net10.0 worker and the program itself is still .NET Framework
+; 4.8, so a pharmacy PC has no .NET 10 runtime on it and generally no internet to fetch one. A
+; framework-dependent build would install cleanly and then fail at service start, which is the worst
+; of both — it looks installed and answers nobody.
+;
+;   dotnet publish ..\src\Erp.TelegramBot -c Release -r win-x64 --self-contained true -o ..\dist\bot
+#define BotBin "..\dist\bot"
+#define BotService "DawaiiTelegramBot"
 
 [Setup]
 AppName={#AppName}
@@ -57,22 +69,33 @@ Source: "setup_mysql.ps1"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "{#DbDir}\schema.mysql.sql"; DestDir: "{app}\install"; Flags: ignoreversion
 Source: "{#DbDir}\seed.mysql.sql"; DestDir: "{app}\install"; Flags: ignoreversion
 
+; The bot, only when it was asked for. appsettings.json is deliberately EXCLUDED and written by this
+; installer instead: the published copy is a developer's file, and if one ever had a live token left
+; in it, that token would ship to every pharmacy — and a leaked bot token can only be stopped by
+; revoking it in BotFather. Writing it here also sets ErpDirectory, which nothing else can know.
+Source: "{#BotBin}\*"; DestDir: "{app}\bot"; Excludes: "appsettings.json"; \
+  Flags: recursesubdirs ignoreversion; Check: InstallingBot
+
+[UninstallDelete]
+; Written by this installer rather than copied, so uninstall does not know about it.
+Type: filesandordirs; Name: "{app}\bot"
+
 [Dirs]
 Name: "{commonappdata}\Dawaii"; Permissions: users-modify
 
 [Icons]
-Name: "{group}\Ø¯ÙˆØ§Ø¦ÙŠ Dawaii"; Filename: "{app}\{#ExeName}"
-Name: "{autodesktop}\Ø¯ÙˆØ§Ø¦ÙŠ Dawaii"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
+Name: "{group}\دوائي Dawaii"; Filename: "{app}\{#ExeName}"
+Name: "{autodesktop}\دوائي Dawaii"; Filename: "{app}\{#ExeName}"; Tasks: desktopicon
 
 [Tasks]
-Name: "desktopicon"; Description: "Ø¥Ù†Ø´Ø§Ø¡ Ø§Ø®ØªØµØ§Ø± Ø¹Ù„Ù‰ Ø³Ø·Ø­ Ø§Ù„Ù…ÙƒØªØ¨"; GroupDescription: "Ø§Ø®ØªØµØ§Ø±Ø§Øª:"
+Name: "desktopicon"; Description: "إنشاء اختصار على سطح المكتب"; GroupDescription: "اختصارات:"
 
 [Run]
-Filename: "{app}\{#ExeName}"; Description: "ØªØ´ØºÙŠÙ„ Ø¯ÙˆØ§Ø¦ÙŠ"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#ExeName}"; Description: "تشغيل دوائي"; Flags: nowait postinstall skipifsilent
 
 [Code]
 const
-  DataKeep = 0;    { leave this PC's database alone â€” just upgrade the program }
+  DataKeep = 0;    { leave this PC's database alone — just upgrade the program }
   DataNew = 1;     { new pharmacy: start from an empty database (the app seeds the demo) }
   DataImport = 2;  { existing pharmacy: bring its backup onto this PC }
 
@@ -82,8 +105,10 @@ var
   ImportPage: TInputFileWizardPage;    { the backup file, when importing }
   ManagerPage: TInputQueryWizardPage;  { root pwd + app pwd }
   CounterPage: TInputQueryWizardPage;  { manager IP + app pwd }
+  BotPage: TInputOptionWizardPage;     { install the Telegram bot service on this PC? }
+  BotPageSeen: Boolean;                { so revisiting the page does not undo a deliberate 'no' }
 
-{ Where the single-PC backend keeps its database â€” must match AppConfig.DatabasePath. }
+{ Where the single-PC backend keeps its database — must match AppConfig.DatabasePath. }
 function LocalDbPath: string;
 begin
   Result := ExpandConstant('{commonappdata}\Dawaii\dawaii.db');
@@ -92,19 +117,19 @@ end;
 procedure InitializeWizard;
 begin
   ModePage := CreateInputOptionPage(wpSelectDir,
-    'Ø·Ø±ÙŠÙ‚Ø© Ø§Ù„Ø§Ø³ØªØ®Ø¯Ø§Ù…', 'ÙƒÙŠÙ Ø³ÙŠÙØ³ØªØ®Ø¯Ù… Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²ØŸ',
-    'Ø§Ø®ØªØ± ÙˆØ§Ø­Ø¯Ø§Ù‹:', True, False);
-  ModePage.Add('ÙƒÙ…Ø¨ÙŠÙˆØªØ± ÙˆØ§Ø­Ø¯ ÙÙ‚Ø· (Ø§Ù„Ø£Ø¨Ø³Ø· â€” Ø¨Ø¯ÙˆÙ† Ø¥Ø¹Ø¯Ø§Ø¯)');
-  ModePage.Add('Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± (ÙŠØ­ØªÙØ¸ Ø¨Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª ÙˆÙŠØ´Ø§Ø±ÙƒÙ‡Ø§ Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø¨ÙƒØ©)');
-  ModePage.Add('Ø¬Ù‡Ø§Ø² ÙƒØ§Ø´ÙŠØ± Ø¥Ø¶Ø§ÙÙŠ (ÙŠØªØµÙ„ Ø¨Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ±)');
+    'طريقة الاستخدام', 'كيف سيُستخدم هذا الجهاز؟',
+    'اختر واحداً:', True, False);
+  ModePage.Add('كمبيوتر واحد فقط (الأبسط — بدون إعداد)');
+  ModePage.Add('جهاز المدير (يحتفظ بقاعدة البيانات ويشاركها على الشبكة)');
+  ModePage.Add('جهاز كاشير إضافي (يتصل بجهاز المدير)');
   ModePage.SelectedValueIndex := 0;
 
   DataPage := CreateInputOptionPage(ModePage.ID,
-    'Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ØµÙŠØ¯Ù„ÙŠØ©', 'Ù…Ø§ Ø§Ù„Ø°ÙŠ ØªØ¨Ø¯Ø£ Ø¨Ù‡ Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²ØŸ',
-    'Ø§Ø®ØªØ± ÙˆØ§Ø­Ø¯Ø§Ù‹:', True, False);
-  DataPage.Add('ØªØ±Ù‚ÙŠØ© â€” Ø§Ù„Ø¥Ø¨Ù‚Ø§Ø¡ Ø¹Ù„Ù‰ Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²');
-  DataPage.Add('ØµÙŠØ¯Ù„ÙŠØ© Ø¬Ø¯ÙŠØ¯Ø© â€” Ø§Ù„Ø¨Ø¯Ø¡ Ø¨Ø¨ÙŠØ§Ù†Ø§Øª ØªØ¬Ø±ÙŠØ¨ÙŠØ© Ù„Ù„ØªØ¯Ø±ÙŠØ¨');
-  DataPage.Add('ØµÙŠØ¯Ù„ÙŠØ© Ø­Ø§Ù„ÙŠØ© â€” Ø§Ø³ØªÙŠØ±Ø§Ø¯ Ù†Ø³Ø®Ø© Ø§Ø­ØªÙŠØ§Ø·ÙŠØ© Ù…Ù† Ø¨ÙŠØ§Ù†Ø§ØªÙ‡Ø§');
+    'بيانات الصيدلية', 'ما الذي تبدأ به على هذا الجهاز؟',
+    'اختر واحداً:', True, False);
+  DataPage.Add('ترقية — الإبقاء على البيانات الموجودة على هذا الجهاز');
+  DataPage.Add('صيدلية جديدة — البدء ببيانات تجريبية للتدريب');
+  DataPage.Add('صيدلية حالية — استيراد نسخة احتياطية من بياناتها');
   { Default to the safe answer: upgrade where data exists, new pharmacy on a clean PC. }
   if FileExists(LocalDbPath) then
     DataPage.SelectedValueIndex := DataKeep
@@ -112,22 +137,34 @@ begin
     DataPage.SelectedValueIndex := DataNew;
 
   ImportPage := CreateInputFilePage(DataPage.ID,
-    'Ø§Ø³ØªÙŠØ±Ø§Ø¯ Ù†Ø³Ø®Ø© Ø§Ø­ØªÙŠØ§Ø·ÙŠØ©', 'Ù…Ù„Ù Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„ØµÙŠØ¯Ù„ÙŠØ©',
-    'Ø§Ø®ØªØ± Ù…Ù„Ù Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ø§Ø­ØªÙŠØ§Ø·ÙŠØ©. Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…ÙˆØ¬ÙˆØ¯Ø© Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø² ØªÙØ­ÙØ¸ Ø¨Ø¬ÙˆØ§Ø±Ù‡Ø§ ÙˆÙ„Ø§ ØªÙØ­Ø°ÙØŒ' + #13#10 +
-    'ÙˆÙŠÙ‚ÙˆÙ… Ø§Ù„Ø¨Ø±Ù†Ø§Ù…Ø¬ Ø¨ØªØ­Ø¯ÙŠØ« Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ù…Ø³ØªÙˆØ±Ø¯Ø© Ø¥Ù„Ù‰ Ø§Ù„Ø¥ØµØ¯Ø§Ø± Ø§Ù„Ø¬Ø¯ÙŠØ¯ Ø¹Ù†Ø¯ Ø£ÙˆÙ„ ØªØ´ØºÙŠÙ„.');
-  ImportPage.Add('Ù…Ù„Ù Ø§Ù„Ù†Ø³Ø®Ø©:', 'Ù†Ø³Ø®Ø© Ø¯ÙˆØ§Ø¦ÙŠ|*.db;*.sql|ÙƒÙ„ Ø§Ù„Ù…Ù„ÙØ§Øª|*.*', '.db');
+    'استيراد نسخة احتياطية', 'ملف بيانات الصيدلية',
+    'اختر ملف النسخة الاحتياطية. البيانات الموجودة على هذا الجهاز تُحفظ بجوارها ولا تُحذف،' + #13#10 +
+    'ويقوم البرنامج بتحديث النسخة المستوردة إلى الإصدار الجديد عند أول تشغيل.');
+  ImportPage.Add('ملف النسخة:', 'نسخة دوائي|*.db;*.sql|كل الملفات|*.*', '.db');
 
   ManagerPage := CreateInputQueryPage(ImportPage.ID,
-    'Ø¥Ø¹Ø¯Ø§Ø¯ Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ù…Ø¯ÙŠØ±', 'Ø¨ÙŠØ§Ù†Ø§Øª MySQL Ø¹Ù„Ù‰ Ù‡Ø°Ø§ Ø§Ù„Ø¬Ù‡Ø§Ø²',
-    'ÙŠØ¬Ø¨ Ø£Ù† ÙŠÙƒÙˆÙ† Ø®Ø§Ø¯Ù… MySQL Ù…Ø«Ø¨ØªØ§Ù‹ ÙˆÙŠØ¹Ù…Ù„ ÙƒØ®Ø¯Ù…Ø©. Ø£Ø¯Ø®Ù„ ÙƒÙ„Ù…ØªÙŠ Ø§Ù„Ù…Ø±ÙˆØ±:');
-  ManagerPage.Add('ÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± root ÙÙŠ MySQL:', True);
-  ManagerPage.Add('ÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ (dawaii_app):', True);
+    'إعداد قاعدة بيانات المدير', 'بيانات MySQL على هذا الجهاز',
+    'يجب أن يكون خادم MySQL مثبتاً ويعمل كخدمة. أدخل كلمتي المرور:');
+  ManagerPage.Add('كلمة مرور root في MySQL:', True);
+  ManagerPage.Add('كلمة مرور مستخدم التطبيق (dawaii_app):', True);
 
   CounterPage := CreateInputQueryPage(ManagerPage.ID,
-    'Ø§Ù„Ø§ØªØµØ§Ù„ Ø¨Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ±', 'Ø¹Ù†ÙˆØ§Ù† Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø¨ÙƒØ©',
-    'Ø£Ø¯Ø®Ù„ Ø¹Ù†ÙˆØ§Ù† IP Ù„Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ± ÙˆÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„ØªØ·Ø¨ÙŠÙ‚:');
-  CounterPage.Add('Ø¹Ù†ÙˆØ§Ù† IP Ù„Ø¬Ù‡Ø§Ø² Ø§Ù„Ù…Ø¯ÙŠØ±:', False);
-  CounterPage.Add('ÙƒÙ„Ù…Ø© Ù…Ø±ÙˆØ± Ù…Ø³ØªØ®Ø¯Ù… Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ (dawaii_app):', True);
+    'الاتصال بجهاز المدير', 'عنوان جهاز المدير على الشبكة',
+    'أدخل عنوان IP لجهاز المدير وكلمة مرور مستخدم التطبيق:');
+  CounterPage.Add('عنوان IP لجهاز المدير:', False);
+  CounterPage.Add('كلمة مرور مستخدم التطبيق (dawaii_app):', True);
+
+  BotPage := CreateInputOptionPage(CounterPage.ID,
+    'مساعد تيليجرام', 'الاطّلاع على تقارير الصيدلية من الهاتف',
+    'يُثبّت كخدمة تعمل في الخلفية وتبدأ مع الجهاز، فيعمل المساعد حتى والبرنامج مغلق.' + #13#10 +
+    'للاطّلاع فقط — لا يُعدّل أي بيانات. ولا يعمل حتى يُدخل المدير رمز البوت من داخل البرنامج.',
+    True, False);
+  BotPage.Add('نعم — تثبيت مساعد تيليجرام على هذا الجهاز');
+  BotPage.Add('لا — بدون مساعد تيليجرام');
+  { Off unless asked for: it is a background service, not a convenience. Turned ON in
+    CurPageChanged when this PC already has one, which cannot be decided until the install
+    directory is settled. }
+  BotPage.SelectedValueIndex := 1;
 end;
 
 function Mode: Integer;
@@ -138,12 +175,15 @@ end;
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
   Result := False;
-  { A counter holds no data of its own â€” its pharmacy lives in the manager's database. }
+  { A counter holds no data of its own — its pharmacy lives in the manager's database. }
   if PageID = DataPage.ID then Result := Mode = 2;
   if PageID = ImportPage.ID then
     Result := (Mode = 2) or (DataPage.SelectedValueIndex <> DataImport);
   if PageID = ManagerPage.ID then Result := Mode <> 1;
   if PageID = CounterPage.ID then Result := Mode <> 2;
+  { A counter is a till. The owner's phone should reach the manager's PC, and two bots polling
+    the same Telegram account would fight over every message. }
+  if PageID = BotPage.ID then Result := Mode = 2;
 end;
 
 { Every SQLite database begins with this string, so a wrong file is caught here rather than by a
@@ -172,7 +212,7 @@ begin
   f := Trim(ImportPage.Values[0]);
   if not FileExists(f) then
   begin
-    MsgBox('Ù„Ù… ÙŠØªÙ… Ø§Ù„Ø¹Ø«ÙˆØ± Ø¹Ù„Ù‰ Ø§Ù„Ù…Ù„Ù Ø§Ù„Ù…Ø­Ø¯Ø¯.', mbError, MB_OK);
+    MsgBox('لم يتم العثور على الملف المحدد.', mbError, MB_OK);
     Result := False;
     Exit;
   end;
@@ -182,7 +222,7 @@ begin
     { Manager device: the backup is a mysqldump, loaded by setup_mysql.ps1. }
     if Lowercase(ExtractFileExt(f)) <> '.sql' then
     begin
-      MsgBox('ÙÙŠ ÙˆØ¶Ø¹ Ø§Ù„Ø´Ø¨ÙƒØ© ÙŠØ¬Ø¨ Ø§Ø®ØªÙŠØ§Ø± Ù†Ø³Ø®Ø© MySQL Ø¨Ø§Ù…ØªØ¯Ø§Ø¯ sql.', mbError, MB_OK);
+      MsgBox('في وضع الشبكة يجب اختيار نسخة MySQL بامتداد sql.', mbError, MB_OK);
       Result := False;
     end;
     Exit;
@@ -190,9 +230,144 @@ begin
 
   if not IsSqliteFile(f) then
   begin
-    MsgBox('Ù‡Ø°Ø§ Ø§Ù„Ù…Ù„Ù Ù„ÙŠØ³ Ù†Ø³Ø®Ø© Ø§Ø­ØªÙŠØ§Ø·ÙŠØ© Ù„Ù‚Ø§Ø¹Ø¯Ø© Ø¨ÙŠØ§Ù†Ø§Øª Ø¯ÙˆØ§Ø¦ÙŠ. Ø§Ø®ØªØ± Ù…Ù„ÙØ§Ù‹ Ø¨Ø§Ù…ØªØ¯Ø§Ø¯ db.', mbError, MB_OK);
+    MsgBox('هذا الملف ليس نسخة احتياطية لقاعدة بيانات دوائي. اختر ملفاً بامتداد db.', mbError, MB_OK);
     Result := False;
   end;
+end;
+
+{ True when the wizard asked for the bot. Also the [Files] Check, so nothing is copied otherwise. }
+function InstallingBot: Boolean;
+begin
+  Result := (Mode <> 2) and (BotPage.SelectedValueIndex = 0);
+end;
+
+function BotDir: string;
+begin
+  Result := ExpandConstant('{app}\bot');
+end;
+
+{ Runs sc.exe and hands back its exit code. -1 means it could not be run at all. }
+function Sc(const params: string): Integer;
+var
+  rc: Integer;
+begin
+  if not Exec(ExpandConstant('{sys}\sc.exe'), params, '', SW_HIDE, ewWaitUntilTerminated, rc) then
+    Result := -1
+  else
+    Result := rc;
+end;
+
+function ServiceExists: Boolean;
+begin
+  { 1060 is "the specified service does not exist". }
+  Result := Sc('query {#BotService}') <> 1060;
+end;
+
+procedure StopBotService;
+begin
+  if ServiceExists then
+  begin
+    Sc('stop {#BotService}');
+    { Windows reports the stop as pending and returns immediately. Without this the executable is
+      still locked when the file copy starts, and the install fails or demands a reboot. }
+    Sleep(3000);
+  end;
+end;
+
+{ JSON needs its backslashes doubled, and "C:\Program Files\Dawaii" has two of them. }
+function JsonEscape(const path: string): string;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := 1 to Length(path) do
+    if path[i] = '\' then Result := Result + '\\' else Result := Result + path[i];
+end;
+
+{ Written here rather than shipped from the publish folder, for two reasons.
+  The published copy is a developer's file, and a live token accidentally left in one would ship to
+  every pharmacy — a leaked bot token can only be stopped by revoking it in BotFather.
+  And ErpDirectory can only be known at install time: it is where dawaii.ini ends up. A bot pointed
+  at the wrong database does not fail, it reports cheerfully empty stock, which is far worse.
+  Rewritten on every upgrade so that directory is never left stale. }
+procedure WriteBotSettings;
+var
+  j: string;
+begin
+  j :=
+    '{' + #13#10 +
+    '  "Logging": {' + #13#10 +
+    '    "LogLevel": {' + #13#10 +
+    '      "Default": "Information",' + #13#10 +
+    '      "Microsoft.Hosting.Lifetime": "Information",' + #13#10 +
+    '      "System.Net.Http.HttpClient": "Warning"' + #13#10 +
+    '    }' + #13#10 +
+    '  },' + #13#10 +
+    '  "Bot": {' + #13#10 +
+    '    "Token": "",' + #13#10 +
+    '    "AdminTelegramUserIds": [],' + #13#10 +
+    '    "PollTimeoutSeconds": 30,' + #13#10 +
+    '    "RateLimitPerMinute": 20,' + #13#10 +
+    '    "LinkAttemptsPerMinute": 10,' + #13#10 +
+    '    "ErpDirectory": "' + JsonEscape(ExpandConstant('{app}')) + '",' + #13#10 +
+    '    "BotDatabasePath": "",' + #13#10 +
+    '    "OutboxPollSeconds": 5,' + #13#10 +
+    '    "OutboxMaxAttempts": 12,' + #13#10 +
+    '    "LowStockDigest": true,' + #13#10 +
+    '    "LowStockDigestHour": 9,' + #13#10 +
+    '    "LowStockDigestNames": 8' + #13#10 +
+    '  }' + #13#10 +
+    '}' + #13#10;
+
+  SaveStringToFile(BotDir + '\appsettings.json', j, False);
+end;
+
+function BotNextStepMessage: string;
+begin
+  Result :=
+    'تم تثبيت مساعد تيليجرام، ولم يبدأ بعد لأنّه لا يوجد رمز بوت.' + #13#10 + #13#10 +
+    'افتح دوائي كمدير، ثم "إعداد تيليجرام":' + #13#10 +
+    '١) أدخل الرمز السرّي من BotFather' + #13#10 +
+    '٢) أنشئ رمز ربط، وأرسله من تيليجرام' + #13#10 + #13#10 +
+    'سيعمل المساعد بعدها تلقائيّاً مع كل تشغيل للجهاز.';
+end;
+
+{ Registers the service and tries to start it.
+  A fresh install has no token yet, so the start FAILS — by design: the bot refuses to run rather
+  than poll forever unable to authorize anybody. That is not an install error, and the final page
+  says what to do next. On an upgrade the token is already sealed in the bot's database and the
+  service simply comes back up. }
+procedure InstallBotService;
+var
+  exe: string;
+begin
+  exe := BotDir + '\Erp.TelegramBot.exe';
+  if not FileExists(exe) then Exit;
+
+  WriteBotSettings;
+
+  if ServiceExists then
+    Sc('config {#BotService} binPath= "' + exe + '" start= auto')
+  else
+    Sc('create {#BotService} binPath= "' + exe + '" start= auto DisplayName= "Dawaii Telegram Bot"');
+
+  Sc('description {#BotService} "Dawaii pharmacy - Telegram reporting bot for the manager"');
+
+  { Restart on failure, but slowly: a bot that cannot reach its database should not hammer the PC. }
+  Sc('failure {#BotService} reset= 86400 actions= restart/60000/restart/120000/restart/300000');
+
+  { Silent installs are scripted by whoever deploys to a chain of shops; a modal box there would
+    hang the run until somebody walked over and clicked it. }
+  if (Sc('start {#BotService}') <> 0) and (not WizardSilent) then
+    MsgBox(BotNextStepMessage, mbInformation, MB_OK);
+end;
+
+procedure RemoveBotService;
+begin
+  if not ServiceExists then Exit;
+  Sc('stop {#BotService}');
+  Sleep(3000);
+  Sc('delete {#BotService}');
 end;
 
 procedure WriteIni;
@@ -202,7 +377,7 @@ begin
   if Mode = 0 then
     Exit; { single computer: no ini, app defaults to local SQLite }
 
-  ini := '# Ø¯ÙˆØ§Ø¦ÙŠ â€” network configuration (written by installer)' + #13#10 + 'mode=server' + #13#10;
+  ini := '# دوائي — network configuration (written by installer)' + #13#10 + 'mode=server' + #13#10;
   if Mode = 1 then
     ini := ini + 'host=localhost' + #13#10 + 'password=' + ManagerPage.Values[1] + #13#10
   else
@@ -247,7 +422,7 @@ begin
   ArchiveLocalDb('before-import');
   DropWalFiles;
   if not FileCopy(ImportPage.Values[0], LocalDbPath, False) then
-    MsgBox('ØªØ¹Ø°Ù‘Ø± Ù†Ø³Ø® Ù…Ù„Ù Ø§Ù„Ù†Ø³Ø®Ø© Ø§Ù„Ø§Ø­ØªÙŠØ§Ø·ÙŠØ© Ø¥Ù„Ù‰:' + #13#10 + LocalDbPath, mbError, MB_OK);
+    MsgBox('تعذّر نسخ ملف النسخة الاحتياطية إلى:' + #13#10 + LocalDbPath, mbError, MB_OK);
 end;
 
 procedure SetupManagerDatabase;
@@ -262,9 +437,30 @@ begin
   if DataPage.SelectedValueIndex = DataImport then
     params := params + ' -RestoreFile "' + ImportPage.Values[0] + '"';
   if not Exec('powershell.exe', params, '', SW_SHOW, ewWaitUntilTerminated, rc) then
-    MsgBox('ØªØ¹Ø°Ù‘Ø± ØªØ´ØºÙŠÙ„ Ø¥Ø¹Ø¯Ø§Ø¯ MySQL. ØªØ£ÙƒØ¯ Ù…Ù† ØªØ«Ø¨ÙŠØª MySQL Server Ø£ÙˆÙ„Ø§Ù‹.', mbError, MB_OK)
+    MsgBox('تعذّر تشغيل إعداد MySQL. تأكد من تثبيت MySQL Server أولاً.', mbError, MB_OK)
   else if rc <> 0 then
-    MsgBox('Ø§Ù†ØªÙ‡Ù‰ Ø¥Ø¹Ø¯Ø§Ø¯ Ù‚Ø§Ø¹Ø¯Ø© Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ø¨Ø±Ù…Ø² ' + IntToStr(rc) + '. Ø±Ø§Ø¬Ø¹ Ø§Ù„Ø±Ø³Ø§Ø¦Ù„.', mbInformation, MB_OK);
+    MsgBox('انتهى إعداد قاعدة البيانات برمز ' + IntToStr(rc) + '. راجع الرسائل.', mbInformation, MB_OK);
+end;
+
+{ The service holds its own executable open. Stop it before anything is copied over it, or the
+  install fails on a locked file and asks for a reboot it does not need. }
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  StopBotService;
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = BotPage.ID) and (not BotPageSeen) then
+  begin
+    BotPageSeen := True;
+    { An upgrade must never quietly remove a bot the pharmacy is already using. Asked here rather
+      than at wizard init, because the install directory is only settled once that page has
+      been through. }
+    if FileExists(BotDir + '\Erp.TelegramBot.exe') or ServiceExists then
+      BotPage.SelectedValueIndex := 0;
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -274,5 +470,22 @@ begin
     WriteIni;
     if Mode = 0 then PrepareLocalDatabase;
     if Mode = 1 then SetupManagerDatabase;
+
+    if InstallingBot then
+      InstallBotService
+    else
+    begin
+      { They were asked and said no. Leaving a registered service behind after that would be the
+        installer deciding it knew better — and leaving the files behind would have the NEXT upgrade
+        see an installed bot and default the choice back to yes. }
+      RemoveBotService;
+      DelTree(BotDir, True, True, True);
+    end;
   end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  { Before the files go, while the executable the service points at still exists. }
+  if CurUninstallStep = usUninstall then RemoveBotService;
 end;
